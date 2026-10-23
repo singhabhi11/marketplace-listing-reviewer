@@ -1,0 +1,17 @@
+{
+  "name": "marketplace-listing-quality-reviewer",
+  "version": "1.0.0",
+  "description": "Marketplace Listing Quality Reviewer with Deterministic Validation, AI Policy Grounding, and Human Review",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "start": "node server/src/server.js",
+    "seed": "npm run seed --prefix server",
+    "build": "npm run build --prefix client",
+    "test": "npm run test --prefix server && npm run test --prefix client",
+    "test:server": "npm run test --prefix server",
+    "test:client": "npm run test --prefix client"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5"
+  }
+}
