@@ -21,7 +21,11 @@ export const LoginPage = () => {
       await login(email, password);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.message || 'Login failed. Please verify credentials.');
+      if (!err.response) {
+        setError('Cannot connect to backend server. Please verify the backend server is running on port 5000 (or check connection).');
+      } else {
+        setError(err.response?.data?.message || 'Login failed. Please verify credentials.');
+      }
     } finally {
       setLoading(false);
     }

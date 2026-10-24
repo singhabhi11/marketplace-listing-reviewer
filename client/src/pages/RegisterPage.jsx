@@ -35,7 +35,11 @@ export const RegisterPage = () => {
       await register(name, email, password, confirmPassword, role);
       navigate('/');
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed. Please check inputs.');
+      if (!err.response) {
+        setError('Cannot connect to backend server. Please verify the backend server is running on port 5000.');
+      } else {
+        setError(err.response?.data?.message || 'Registration failed. Please check inputs.');
+      }
     } finally {
       setLoading(false);
     }

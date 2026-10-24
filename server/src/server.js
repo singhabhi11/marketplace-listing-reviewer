@@ -14,7 +14,7 @@ const startServer = async () => {
       console.warn(`[Seed] Initial auto-seed note: ${seedErr.message}`);
     }
 
-    const server = app.listen(config.port, () => {
+    const server = app.listen(config.port, '0.0.0.0', () => {
       console.log(`=================================================`);
       console.log(` Marketplace Listing Quality Reviewer Server`);
       console.log(` Mode: ${config.nodeEnv}`);
