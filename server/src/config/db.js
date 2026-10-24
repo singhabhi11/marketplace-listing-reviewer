@@ -10,6 +10,16 @@ export const connectDB = async (customUri = null) => {
 
   const uri = customUri || config.mongodbUri;
 
+  if (uri.includes('127.0.0.1') || uri.includes('localhost')) {
+    if (process.env.RENDER || config.nodeEnv === 'production') {
+      console.warn(
+        '\n[DB Warning] You are running in cloud hosting, but MONGODB_URI is pointing to localhost (127.0.0.1).\n' +
+        'Render cloud servers do not run a local MongoDB instance.\n' +
+        '-> Go to Render Dashboard -> Your Web Service -> Environment tab -> Add MONGODB_URI with your MongoDB Atlas URL.\n'
+      );
+    }
+  }
+
   try {
     const conn = await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 5000,

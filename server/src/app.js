@@ -59,6 +59,31 @@ app.use(cookieParser());
 // General Rate Limiter
 app.use('/api', apiLimiter);
 
+// Root API Welcome Endpoint
+app.get('/', (req, res) => {
+  const isDbConnected = mongoose.connection.readyState === 1;
+  return res.status(200).json({
+    success: true,
+    message: 'Marketplace Listing Quality Reviewer Backend API is live!',
+    version: '1.0.0',
+    database: {
+      connected: isDbConnected,
+      status: isDbConnected
+        ? 'Connected'
+        : 'Disconnected: Set MONGODB_URI in Render Environment tab with your MongoDB Atlas connection string',
+    },
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+      listings: '/api/listings',
+      reviews: '/api/reviews',
+      policies: '/api/policies',
+      reports: '/api/reports',
+      users: '/api/users',
+    },
+  });
+});
+
 // Health Check Endpoint
 app.get('/api/health', (req, res) => {
   const isDbConnected = mongoose.connection.readyState === 1;
