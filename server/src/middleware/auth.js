@@ -31,6 +31,13 @@ export const authenticate = async (req, res, next) => {
       });
     }
 
+    if (user.status === 'suspended') {
+      return res.status(403).json({
+        success: false,
+        message: 'Your account has been suspended. Please contact platform administration.',
+      });
+    }
+
     req.user = user;
     next();
   } catch (error) {

@@ -74,9 +74,9 @@ describe('Review Orchestration & Human Approval Workflows', () => {
     expect(replicaFinding).toBeDefined();
     expect(replicaFinding.severity).toBe('Critical');
 
-    // Listing status should be updated to 'Changes Suggested'
+    // Listing status should be updated to 'Changes Suggested' or 'Changes Requested'
     const updatedListing = await Listing.findById(testListing._id);
-    expect(updatedListing.status).toBe('Changes Suggested');
+    expect(['Changes Suggested', 'Changes Requested']).toContain(updatedListing.status);
 
     // Audit event must be created
     const auditEvents = await AuditEvent.find({ listingId: testListing._id, action: 'REVIEW_GENERATED' });

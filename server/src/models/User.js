@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
 const userSchema = new mongoose.Schema(
   {
@@ -24,8 +25,45 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['reviewer', 'administrator'],
+      enum: ['administrator', 'reviewer', 'seller'],
       default: 'reviewer',
+    },
+    status: {
+      type: String,
+      enum: ['active', 'suspended'],
+      default: 'active',
+      index: true,
+    },
+    department: {
+      type: String,
+      trim: true,
+      default: 'Listing Operations',
+    },
+    lastLoginAt: {
+      type: Date,
+      default: Date.now,
+    },
+    avatar: {
+      type: String,
+      default: '',
+    },
+    notificationPreferences: {
+      emailNotifications: { type: Boolean, default: true },
+      reviewAlerts: { type: Boolean, default: true },
+      weeklyDigest: { type: Boolean, default: false },
+    },
+    theme: {
+      type: String,
+      enum: ['light', 'dark', 'system'],
+      default: 'system',
+    },
+    resetPasswordToken: {
+      type: String,
+      default: null,
+    },
+    resetPasswordExpires: {
+      type: Date,
+      default: null,
     },
   },
   {
@@ -37,9 +75,18 @@ userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.passwordHash);
 };
 
+userSchema.methods.createPasswordResetToken = function () {
+  const resetToken = crypto.randomBytes(32).toString('hex');
+  this.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+  this.resetPasswordExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+  return resetToken;
+};
+
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.passwordHash;
+  delete obj.resetPasswordToken;
+  delete obj.resetPasswordExpires;
   return obj;
 };
 

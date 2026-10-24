@@ -1,8 +1,9 @@
-import React from 'react';
-import { ArrowRight, Check, X } from 'lucide-react';
+import React from "react";
+import { ArrowRight, Check, X } from "lucide-react";
 
 export const DiffViewer = ({ fieldName, originalValue, revisedValue }) => {
-  const isDifferent = String(originalValue || '').trim() !== String(revisedValue || '').trim();
+  const isDifferent =
+    String(originalValue || "").trim() !== String(revisedValue || "").trim();
 
   return (
     <div className="bg-slate-50 rounded-xl border border-slate-200 overflow-hidden">
@@ -27,7 +28,9 @@ export const DiffViewer = ({ fieldName, originalValue, revisedValue }) => {
             <span>Original Content</span>
           </div>
           <div className="text-sm text-slate-700 font-mono bg-red-50/40 p-3 rounded-lg border border-red-100 whitespace-pre-wrap break-words">
-            {originalValue || <span className="text-slate-400 italic">Empty</span>}
+            {originalValue || (
+              <span className="text-slate-400 italic">Empty</span>
+            )}
           </div>
         </div>
 
@@ -38,7 +41,11 @@ export const DiffViewer = ({ fieldName, originalValue, revisedValue }) => {
             <span>Suggested Revision</span>
           </div>
           <div className="text-sm text-slate-800 font-mono bg-emerald-50/70 p-3 rounded-lg border border-emerald-200 whitespace-pre-wrap break-words">
-            {revisedValue || <span className="text-slate-400 italic">No revision proposed</span>}
+            {revisedValue || (
+              <span className="text-slate-400 italic">
+                No revision proposed
+              </span>
+            )}
           </div>
         </div>
       </div>

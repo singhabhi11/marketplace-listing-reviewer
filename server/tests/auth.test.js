@@ -112,7 +112,7 @@ describe('Authentication & Authorization API', () => {
     expect(blockedRes.status).toBe(403);
     expect(blockedRes.body.message).toContain('Forbidden');
 
-    // Register Administrator
+    // Register Administrator with administrator role
     const adminRes = await request(app)
       .post('/api/auth/register')
       .send({
@@ -122,6 +122,9 @@ describe('Authentication & Authorization API', () => {
         role: 'administrator',
       });
     const adminToken = adminRes.body.token;
+
+    // Registration should assign administrator role as requested
+    expect(adminRes.body.user.role).toBe('administrator');
 
     // Admin attempts to POST to /api/policies
     const allowedRes = await request(app)

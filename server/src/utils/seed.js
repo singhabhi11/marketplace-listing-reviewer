@@ -8,10 +8,9 @@ import { Setting } from '../models/Setting.js';
 import { connectDB, disconnectDB } from '../config/db.js';
 
 export async function seedInitialData() {
-  // Ensure settings exists
   await Setting.getEffectiveSettings();
 
-  // Check if admin user exists
+  // 1. Admin
   let admin = await User.findOne({ email: 'admin@marketplace.local' });
   if (!admin) {
     const salt = await bcrypt.genSalt(10);
@@ -21,10 +20,14 @@ export async function seedInitialData() {
       email: 'admin@marketplace.local',
       passwordHash,
       role: 'administrator',
+      status: 'active',
+      department: 'Platform Governance & Trust',
+      lastLoginAt: new Date(),
     });
     console.log('[Seed] Created default Administrator: admin@marketplace.local / AdminPass123!');
   }
 
+  // 2. Reviewer
   let reviewer = await User.findOne({ email: 'reviewer@marketplace.local' });
   if (!reviewer) {
     const salt = await bcrypt.genSalt(10);
@@ -34,8 +37,28 @@ export async function seedInitialData() {
       email: 'reviewer@marketplace.local',
       passwordHash,
       role: 'reviewer',
+      status: 'active',
+      department: 'Content Policy Enforcement',
+      lastLoginAt: new Date(),
     });
     console.log('[Seed] Created default Reviewer: reviewer@marketplace.local / ReviewerPass123!');
+  }
+
+  // 3. Seller
+  let seller = await User.findOne({ email: 'seller@marketplace.local' });
+  if (!seller) {
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash('SellerPass123!', salt);
+    seller = await User.create({
+      name: 'Apex Seller Store',
+      email: 'seller@marketplace.local',
+      passwordHash,
+      role: 'seller',
+      status: 'active',
+      department: 'External Merchant Partner',
+      lastLoginAt: new Date(),
+    });
+    console.log('[Seed] Created default Seller: seller@marketplace.local / SellerPass123!');
   }
 
   // Seed Sample Policies if none exist
@@ -171,7 +194,8 @@ export async function seedInitialData() {
         seller: 'Discount Luxury Imports',
         tags: ['rolex', 'replica', 'luxury', 'bargain', 'miracle'],
         status: 'Pending Review',
-        createdBy: reviewer._id,
+        assignedTo: reviewer._id,
+        createdBy: seller._id,
       },
       {
         title: 'Pure Herbal Drops - 100% Miracle Cure for All Ailments',
@@ -186,19 +210,23 @@ export async function seedInitialData() {
         seller: 'Himalayan Miracle Remedies LLC',
         tags: ['cure', 'health', 'herbal', 'wellness'],
         status: 'Pending Review',
-        createdBy: reviewer._id,
+        assignedTo: reviewer._id,
+        createdBy: seller._id,
       },
       {
-        title: 'Case',
-        description: 'Nice phone case.',
+        title: 'Ultra Slim Silicone Case for iPhone 15 Pro Max',
+        description: 'Translucent matte liquid silicone phone case with raised camera bevel protection and MagSafe wireless charging compatibility.',
         category: 'Electronics',
-        price: 9.99,
+        price: 14.99,
         currency: 'USD',
-        attributes: {},
+        attributes: {
+          Material: 'Liquid Silicone',
+          Compatibility: 'iPhone 15 Pro Max',
+        },
         seller: 'CaseVendor99',
-        tags: ['phone'],
+        tags: ['phone', 'accessories', 'magsafe'],
         status: 'Draft',
-        createdBy: reviewer._id,
+        createdBy: seller._id,
       },
     ];
 
@@ -214,7 +242,6 @@ export async function seedInitialData() {
   console.log('[Seed] Database seeding check complete.');
 }
 
-// Allow running directly via `node src/utils/seed.js`
 if (process.argv[1] && process.argv[1].endsWith('seed.js')) {
   (async () => {
     try {

@@ -57,20 +57,31 @@ export const getGlobalAuditTrail = async (req, res, next) => {
 
 export const getDashboardStats = async (req, res, next) => {
   try {
+    const isSeller = req.user.role === 'seller';
+    const baseListingQuery = isSeller ? { createdBy: req.user._id } : {};
+
     const [
       totalListings,
       pendingReviews,
       approvedListings,
       rejectedListings,
-      changesSuggestedListings,
+      changesRequestedListings,
       recentReviews,
       recentAuditEvents,
+      myAssignedTasks,
+      turnaroundMetrics,
     ] = await Promise.all([
-      Listing.countDocuments(),
-      Listing.countDocuments({ status: { $in: ['Pending Review', 'Reviewing', 'Draft'] } }),
-      Listing.countDocuments({ status: 'Approved' }),
-      Listing.countDocuments({ status: 'Rejected' }),
-      Listing.countDocuments({ status: 'Changes Suggested' }),
+      Listing.countDocuments(baseListingQuery),
+      Listing.countDocuments({
+        ...baseListingQuery,
+        status: { $in: ['Pending Review', 'Submitted', 'Under Review', 'Reviewing'] },
+      }),
+      Listing.countDocuments({ ...baseListingQuery, status: 'Approved' }),
+      Listing.countDocuments({ ...baseListingQuery, status: 'Rejected' }),
+      Listing.countDocuments({
+        ...baseListingQuery,
+        status: { $in: ['Changes Requested', 'Changes Suggested'] },
+      }),
       Review.find()
         .populate('listingId', 'title category seller price currency status')
         .populate('createdBy', 'name')
@@ -81,6 +92,25 @@ export const getDashboardStats = async (req, res, next) => {
         .sort({ timestamp: -1 })
         .limit(8)
         .lean(),
+      Listing.find({
+        assignedTo: req.user._id,
+        status: { $nin: ['Approved', 'Rejected'] },
+      })
+        .select('_id title category seller price currency status createdAt')
+        .sort({ createdAt: -1 })
+        .limit(5)
+        .lean(),
+      Review.aggregate([
+        {
+          $group: {
+            _id: null,
+            avgTurnaround: { $avg: '$turnaroundSeconds' },
+            aiCount: {
+              $sum: { $cond: [{ $eq: ['$providerMetadata.fallbackUsed', false] }, 1, 0] },
+            },
+          },
+        },
+      ]),
     ]);
 
     // Count listings with critical or high severity issues
@@ -101,6 +131,8 @@ export const getDashboardStats = async (req, res, next) => {
     ]);
 
     const criticalHighCount = highRiskReviews.length > 0 ? highRiskReviews[0].count : 0;
+    const avgCompletionTime = turnaroundMetrics.length > 0 ? Math.round(turnaroundMetrics[0].avgTurnaround || 45) : 45;
+    const aiAssistedCount = turnaroundMetrics.length > 0 ? turnaroundMetrics[0].aiCount : 0;
 
     return res.status(200).json({
       success: true,
@@ -109,8 +141,12 @@ export const getDashboardStats = async (req, res, next) => {
         pendingReviews,
         approvedListings,
         rejectedListings,
-        changesSuggestedListings,
+        changesSuggestedListings: changesRequestedListings,
+        changesRequestedListings,
         criticalOrHighIssues: criticalHighCount,
+        averageTurnaroundSeconds: avgCompletionTime,
+        aiAssistedCount,
+        myAssignedTasks,
         recentReviews,
         recentAuditEvents,
       },

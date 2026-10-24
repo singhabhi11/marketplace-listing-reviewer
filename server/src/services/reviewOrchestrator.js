@@ -9,6 +9,8 @@ import { logAuditEvent } from './audit/auditLogger.js';
  * Orchestrates full 12-step quality review workflow for a listing.
  */
 export async function orchestrateListingReview(listingId, user) {
+  const startTime = Date.now();
+
   // Step 1: Receive the listing and validate its structure
   const listing = await Listing.findById(listingId);
   if (!listing) {
@@ -43,43 +45,62 @@ export async function orchestrateListingReview(listingId, user) {
   }));
 
   // Step 4 to 8: Send listing and relevant policy excerpts to configured LLM (or fallback)
-  // AI Provider validates structured JSON output and verifies policy citations against retrieved policies
   const aiResult = await executeAiReview(listing, relevantPolicies);
 
-  // Step 9: Merge deterministic and AI findings without silently deleting disagreements
+  // Step 9: Merge deterministic and AI findings
   const mergedFindings = [
     ...deterministicFindings,
     ...aiResult.findings,
   ];
 
+  // Enrich findings with standard issueTitle, affectedField, originalExcerpt, confidenceScore
+  const enrichedFindings = mergedFindings.map((f) => ({
+    ...f,
+    affectedField: f.affectedField || f.field,
+    issueTitle: f.issueTitle || `${(f.issueCategory || 'Policy Issue').replace(/_/g, ' ')} on ${f.field}`,
+    originalExcerpt: f.originalExcerpt || (listing[f.field] ? String(listing[f.field]).slice(0, 160) : null),
+    confidenceScore:
+      f.confidenceScore !== undefined
+        ? f.confidenceScore
+        : f.confidence === 'High'
+        ? 0.95
+        : f.confidence === 'Medium'
+        ? 0.8
+        : 0.65,
+  }));
+
   // Combine suggested revisions
   const finalSuggestedRevisions = { ...(aiResult.suggestedRevisions || {}) };
 
   // Calculate overall proposed status
-  const hasCritical = mergedFindings.some((f) => f.severity === 'Critical');
-  const hasHighOrMedium = mergedFindings.some((f) => f.severity === 'High' || f.severity === 'Medium');
+  const hasCritical = enrichedFindings.some((f) => f.severity === 'Critical');
+  const hasHighOrMedium = enrichedFindings.some((f) => f.severity === 'High' || f.severity === 'Medium');
 
   let proposedStatus = 'Approved';
   if (hasCritical) {
-    proposedStatus = 'Changes Suggested';
-  } else if (hasHighOrMedium || mergedFindings.length > 0) {
-    proposedStatus = 'Changes Suggested';
+    proposedStatus = 'Changes Requested';
+  } else if (hasHighOrMedium || enrichedFindings.length > 0) {
+    proposedStatus = 'Changes Requested';
   }
+
+  const turnaroundSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
 
   // Step 11: Save review result and create immutable Review record
   const review = await Review.create({
     listingId: listing._id,
     originalSnapshot,
-    findings: mergedFindings,
+    findings: enrichedFindings,
     suggestedRevisions: finalSuggestedRevisions,
     overallStatus: proposedStatus,
     providerMetadata: aiResult.providerMetadata,
     policyVersionSnapshot,
     createdBy: user._id,
+    startedAt: new Date(startTime),
+    completedAt: new Date(),
+    turnaroundSeconds,
   });
 
-  // Update listing review pointer and status to 'Changes Suggested' or 'Pending Review'
-  // Note: NEVER automatically apply revised wording to the listing fields!
+  // Update listing review pointer and status
   const previousStatus = listing.status;
   listing.latestReviewId = review._id;
   listing.status = proposedStatus;
@@ -94,12 +115,13 @@ export async function orchestrateListingReview(listingId, user) {
     actorRole: user.role,
     action: 'REVIEW_GENERATED',
     before: { status: previousStatus },
-    after: { status: proposedStatus, reviewId: review._id, findingsCount: mergedFindings.length },
+    after: { status: proposedStatus, reviewId: review._id, findingsCount: enrichedFindings.length },
     metadata: {
       provider: aiResult.providerMetadata?.provider,
       fallbackUsed: aiResult.providerMetadata?.fallbackUsed,
       policyCount: policyVersionSnapshot.length,
-      criticalFindings: mergedFindings.filter((f) => f.severity === 'Critical').length,
+      criticalFindings: enrichedFindings.filter((f) => f.severity === 'Critical').length,
+      turnaroundSeconds,
     },
   });
 

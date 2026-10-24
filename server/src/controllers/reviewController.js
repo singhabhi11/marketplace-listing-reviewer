@@ -60,6 +60,13 @@ export const getReviewById = async (req, res, next) => {
 
 export const approveRevision = async (req, res, next) => {
   try {
+    if (req.user.role === 'seller') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: Sellers cannot approve review suggestions.',
+      });
+    }
+
     const { id: reviewId, findingId } = req.params;
 
     const review = await Review.findById(reviewId);
@@ -128,6 +135,13 @@ export const approveRevision = async (req, res, next) => {
 
 export const rejectRevision = async (req, res, next) => {
   try {
+    if (req.user.role === 'seller') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: Sellers cannot reject review suggestions.',
+      });
+    }
+
     const { id: reviewId, findingId } = req.params;
     const { reason } = req.body;
 
@@ -180,6 +194,13 @@ export const rejectRevision = async (req, res, next) => {
 
 export const editAndApproveRevision = async (req, res, next) => {
   try {
+    if (req.user.role === 'seller') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: Sellers cannot edit reviewer suggestions.',
+      });
+    }
+
     const { id: reviewId, findingId } = req.params;
     const { customValue } = req.body;
 
@@ -249,6 +270,13 @@ export const editAndApproveRevision = async (req, res, next) => {
 
 export const approveAllEligibleRevisions = async (req, res, next) => {
   try {
+    if (req.user.role === 'seller') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: Sellers cannot approve review suggestions.',
+      });
+    }
+
     const { id: reviewId } = req.params;
 
     const review = await Review.findById(reviewId);
@@ -313,13 +341,21 @@ export const approveAllEligibleRevisions = async (req, res, next) => {
 
 export const updateOverallReviewStatus = async (req, res, next) => {
   try {
+    if (req.user.role === 'seller') {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden: Sellers cannot finalize review decisions.',
+      });
+    }
+
     const { id: reviewId } = req.params;
     const { status, notes } = req.body;
 
-    if (!['Approved', 'Rejected', 'Changes Suggested'].includes(status)) {
+    const validStatuses = ['Approved', 'Rejected', 'Changes Suggested', 'Changes Requested'];
+    if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
-        message: "Status must be 'Approved', 'Rejected', or 'Changes Suggested'.",
+        message: `Status must be one of: ${validStatuses.join(', ')}.`,
       });
     }
 
@@ -338,10 +374,14 @@ export const updateOverallReviewStatus = async (req, res, next) => {
 
     review.overallStatus = status;
     review.reviewedBy = req.user._id;
+    review.reviewNotes = notes || '';
     review.completedAt = new Date();
     await review.save();
 
     listing.status = status;
+    if (notes) {
+      listing.reviewDecisionNotes = notes;
+    }
     listing.updatedBy = req.user._id;
     await listing.save();
 
@@ -351,7 +391,7 @@ export const updateOverallReviewStatus = async (req, res, next) => {
       actorId: req.user._id,
       actorName: req.user.name,
       actorRole: req.user.role,
-      action: status === 'Approved' ? 'REVIEW_APPROVED' : 'REVIEW_REJECTED',
+      action: status === 'Approved' ? 'REVIEW_APPROVED' : status === 'Rejected' ? 'REVIEW_REJECTED' : 'CHANGES_REQUESTED',
       before: { reviewStatus: previousReviewStatus, listingStatus: previousListingStatus },
       after: { reviewStatus: status, listingStatus: status },
       metadata: { notes: notes || '' },

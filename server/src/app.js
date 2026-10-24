@@ -13,6 +13,8 @@ import reviewRoutes from './routes/reviewRoutes.js';
 import policyRoutes from './routes/policyRoutes.js';
 import batchRoutes from './routes/batchRoutes.js';
 import auditRoutes from './routes/auditRoutes.js';
+import userRoutes from './routes/userRoutes.js';
+import reportRoutes from './routes/reportRoutes.js';
 import { getDashboardStats } from './controllers/auditController.js';
 import { authenticate } from './middleware/auth.js';
 
@@ -60,6 +62,8 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/policies', policyRoutes);
 app.use('/api/batches', batchRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/dashboard/stats', authenticate, getDashboardStats);
 
 import path from 'path';

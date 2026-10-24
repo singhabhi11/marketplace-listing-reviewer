@@ -48,9 +48,48 @@ const listingSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Draft', 'Pending Review', 'Reviewing', 'Changes Suggested', 'Approved', 'Rejected', 'Failed'],
+      enum: [
+        'Draft',
+        'Submitted',
+        'Pending Review',
+        'Under Review',
+        'Reviewing',
+        'Changes Requested',
+        'Changes Suggested',
+        'Approved',
+        'Rejected',
+        'Failed',
+      ],
       default: 'Draft',
       index: true,
+    },
+    assignedTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
+    archived: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    reviewDecisionNotes: {
+      type: String,
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      default: null,
+    },
+    resubmittedAt: {
+      type: Date,
+      default: null,
+    },
+    duplicateOf: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Listing',
+      default: null,
     },
     latestReviewId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -84,5 +123,7 @@ const listingSchema = new mongoose.Schema(
 
 listingSchema.index({ title: 'text', description: 'text', seller: 'text' });
 listingSchema.index({ status: 1, createdAt: -1 });
+listingSchema.index({ assignedTo: 1, status: 1 });
+listingSchema.index({ archived: 1, createdAt: -1 });
 
 export const Listing = mongoose.model('Listing', listingSchema);

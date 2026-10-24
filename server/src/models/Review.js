@@ -7,6 +7,19 @@ const findingSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    affectedField: {
+      type: String,
+      trim: true,
+    },
+    issueTitle: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+    originalExcerpt: {
+      type: String,
+      default: null,
+    },
     issueCategory: {
       type: String,
       required: true,
@@ -60,6 +73,10 @@ const findingSchema = new mongoose.Schema(
       enum: ['High', 'Medium', 'Low', 'Uncertain'],
       default: 'High',
     },
+    confidenceScore: {
+      type: Number,
+      default: 0.92,
+    },
     isUnverified: {
       type: Boolean,
       default: false,
@@ -97,6 +114,17 @@ const findingSchema = new mongoose.Schema(
   { _id: true }
 );
 
+// Pre-save to synchronize field / affectedField & issueTitle
+findingSchema.pre('save', function (next) {
+  if (!this.affectedField) {
+    this.affectedField = this.field;
+  }
+  if (!this.issueTitle) {
+    this.issueTitle = `${this.issueCategory.replace(/_/g, ' ')} on ${this.field}`;
+  }
+  next();
+});
+
 const reviewSchema = new mongoose.Schema(
   {
     listingId: {
@@ -117,9 +145,13 @@ const reviewSchema = new mongoose.Schema(
     },
     overallStatus: {
       type: String,
-      enum: ['Changes Suggested', 'Approved', 'Rejected', 'Pending Review', 'Failed'],
+      enum: ['Changes Suggested', 'Changes Requested', 'Approved', 'Rejected', 'Pending Review', 'Failed'],
       default: 'Changes Suggested',
       index: true,
+    },
+    reviewNotes: {
+      type: String,
+      default: '',
     },
     providerMetadata: {
       provider: { type: String, default: 'fallback' },
@@ -147,8 +179,16 @@ const reviewSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
+    startedAt: {
+      type: Date,
+      default: Date.now,
+    },
     completedAt: {
       type: Date,
+    },
+    turnaroundSeconds: {
+      type: Number,
+      default: 0,
     },
   },
   {
