@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { formatPrice } from '../utils/currency';
 import { StatusBadge } from '../components/StatusBadge';
 import { SeverityBadge } from '../components/SeverityBadge';
 import {
@@ -45,8 +46,8 @@ export const DashboardPage = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const fetchDashboardData = async () => {
-    setLoading(true);
+  const fetchDashboardData = async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [statsRes, listingsRes] = await Promise.all([
         api.get('/dashboard/stats'),
@@ -79,14 +80,19 @@ export const DashboardPage = () => {
       }
     } catch (err) {
       console.error('Failed to load dashboard statistics:', err);
-      setError('Failed to load dashboard metrics. Check server connectivity.');
+      if (!silent) setError('Failed to load dashboard metrics. Check server connectivity.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchDashboardData();
+    // Auto-poll dashboard stats and recent listings every 20s for real-time synchronization
+    const timer = setInterval(() => {
+      fetchDashboardData(true);
+    }, 20000);
+    return () => clearInterval(timer);
   }, [user]);
 
   const statCards = [
@@ -400,7 +406,7 @@ export const DashboardPage = () => {
 
                 <div className="mt-3 pt-2.5 border-t border-slate-100 dark:border-slate-700 flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-900 dark:text-white">
-                    ${item.price?.toFixed(2)}
+                    {formatPrice(item.price, item.currency)}
                   </span>
                   <Link
                     to={`/listings/${item._id}/review`}
@@ -449,6 +455,7 @@ export const DashboardPage = () => {
               <option value="Pending Review">Pending Review</option>
               <option value="Changes Suggested">Changes Suggested</option>
               <option value="Changes Requested">Changes Requested</option>
+              <option value="Pending Admin Approval">Pending Admin Approval</option>
               <option value="Approved">Approved</option>
               <option value="Rejected">Rejected</option>
             </select>
@@ -504,20 +511,27 @@ export const DashboardPage = () => {
                       className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors"
                     >
                       <td className="py-4 px-6 font-medium text-slate-900 dark:text-white max-w-xs truncate">
-                        <Link
-                          to={`/listings/${listing._id}`}
-                          className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                        >
-                          {listing.title}
-                        </Link>
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            to={`/listings/${listing._id}`}
+                            className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors truncate"
+                          >
+                            {listing.title}
+                          </Link>
+                          {listing.revision > 1 && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                              v{listing.revision}
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-4 px-4 text-slate-600 dark:text-slate-300">
                         <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-[11px]">
                           {listing.category}
                         </span>
                       </td>
-                      <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white">
-                        ${listing.price?.toFixed(2)} {listing.currency}
+                      <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white whitespace-nowrap">
+                        {formatPrice(listing.price, listing.currency)}
                       </td>
                       <td className="py-4 px-4 text-slate-600 dark:text-slate-300">
                         {listing.seller}

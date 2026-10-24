@@ -1,5 +1,6 @@
 import { Review } from '../models/Review.js';
 import { Listing } from '../models/Listing.js';
+import { Setting } from '../models/Setting.js';
 import { orchestrateListingReview } from '../services/reviewOrchestrator.js';
 import { logAuditEvent } from '../services/audit/auditLogger.js';
 
@@ -155,11 +156,12 @@ export const rejectRevision = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Finding not found on this review.' });
     }
 
-    finding.status = 'rejected';
+    const actionStatus = (req.path.includes('dismiss') || req.body.status === 'dismissed') ? 'dismissed' : 'rejected';
+    finding.status = actionStatus;
     finding.reviewerDecision = {
-      action: 'rejected',
+      action: actionStatus,
       appliedValue: null,
-      rejectionReason: reason || 'Rejected by human reviewer',
+      rejectionReason: reason || (actionStatus === 'dismissed' ? 'Dismissed by reviewer' : 'Rejected by human reviewer'),
       decidedAt: new Date(),
       decidedBy: req.user._id,
     };
@@ -349,13 +351,20 @@ export const updateOverallReviewStatus = async (req, res, next) => {
     }
 
     const { id: reviewId } = req.params;
-    const { status, notes } = req.body;
+    let { status, notes } = req.body;
 
-    const validStatuses = ['Approved', 'Rejected', 'Changes Suggested', 'Changes Requested'];
+    const validStatuses = ['Approved', 'Rejected', 'Changes Suggested', 'Changes Requested', 'Pending Admin Approval'];
     if (!validStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
         message: `Status must be one of: ${validStatuses.join(', ')}.`,
+      });
+    }
+
+    if (status === 'Rejected' && (!notes || !notes.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: 'A rejection reason is mandatory when rejecting a listing.',
       });
     }
 
@@ -369,18 +378,36 @@ export const updateOverallReviewStatus = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Listing not found.' });
     }
 
+    // Repeated approval check to avoid duplicate state transitions
+    if (listing.status === 'Approved' && status === 'Approved') {
+      return res.status(200).json({
+        success: true,
+        message: 'Listing is already approved.',
+        data: { review, listing },
+      });
+    }
+
+    // Workflow check: If reviewer approves and platform policy requires admin sign-off
+    const settings = await Setting.getEffectiveSettings();
+    if (status === 'Approved' && settings.validationThresholds?.requireAdminApproval && req.user.role !== 'administrator') {
+      status = 'Pending Admin Approval';
+    }
+
     const previousReviewStatus = review.overallStatus;
     const previousListingStatus = listing.status;
 
     review.overallStatus = status;
     review.reviewedBy = req.user._id;
-    review.reviewNotes = notes || '';
+    review.reviewNotes = notes ? notes.trim() : '';
     review.completedAt = new Date();
     await review.save();
 
     listing.status = status;
     if (notes) {
-      listing.reviewDecisionNotes = notes;
+      listing.reviewDecisionNotes = notes.trim();
+      if (status === 'Rejected') {
+        listing.rejectionReason = notes.trim();
+      }
     }
     listing.updatedBy = req.user._id;
     await listing.save();
@@ -391,7 +418,14 @@ export const updateOverallReviewStatus = async (req, res, next) => {
       actorId: req.user._id,
       actorName: req.user.name,
       actorRole: req.user.role,
-      action: status === 'Approved' ? 'REVIEW_APPROVED' : status === 'Rejected' ? 'REVIEW_REJECTED' : 'CHANGES_REQUESTED',
+      action:
+        status === 'Approved'
+          ? 'REVIEW_APPROVED'
+          : status === 'Rejected'
+          ? 'REVIEW_REJECTED'
+          : status === 'Pending Admin Approval'
+          ? 'REVIEW_PENDING_ADMIN_APPROVAL'
+          : 'CHANGES_REQUESTED',
       before: { reviewStatus: previousReviewStatus, listingStatus: previousListingStatus },
       after: { reviewStatus: status, listingStatus: status },
       metadata: { notes: notes || '' },

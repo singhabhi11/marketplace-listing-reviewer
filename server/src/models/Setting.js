@@ -31,6 +31,7 @@ const settingSchema = new mongoose.Schema(
       minPrice: { type: Number, default: 0.01 },
       maxPrice: { type: Number, default: 100000 },
       duplicateSimilarityThreshold: { type: Number, default: 0.80 },
+      requireAdminApproval: { type: Boolean, default: false },
     },
     updatedBy: {
       type: mongoose.Schema.Types.ObjectId,

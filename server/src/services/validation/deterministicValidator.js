@@ -1,6 +1,7 @@
 import { Listing } from '../../models/Listing.js';
 import { Setting } from '../../models/Setting.js';
 import { calculateListingSimilarity } from '../../utils/similarity.js';
+import { validateAttributePairs, formatAttributesText } from '../../utils/attributeNormalizer.js';
 
 /**
  * Deterministic Validation Service
@@ -53,13 +54,13 @@ export async function runDeterministicValidation(listingData, currentListingId =
     });
   }
 
-  if (!category) {
+  if (!category || category.toLowerCase() === 'select category') {
     findings.push({
       field: 'category',
       issueCategory: 'REQUIRED_FIELD',
       ruleId: 'RULE_REQ_CATEGORY',
       severity: 'Critical',
-      description: 'Listing category is not specified.',
+      description: 'Listing category is not specified or placeholder selected.',
       explanation: 'A valid category is required to ensure catalog discoverability and tax classification.',
       recommendedCorrection: 'Select a primary category from the supported category list.',
       source: 'rule',
@@ -98,10 +99,12 @@ export async function runDeterministicValidation(listingData, currentListingId =
     });
   }
 
-  // 2. Price Validation (Positive numeric value & bounds)
+  // 2. Price Validation (Positive numeric value, decimal places, bounds)
   if (price !== undefined && price !== null && price !== '') {
     const numPrice = Number(price);
-    if (isNaN(numPrice) || numPrice <= 0) {
+    const decimalPlaces = (String(price).split('.')[1] || '').length;
+
+    if (isNaN(numPrice) || !isFinite(numPrice) || numPrice <= 0) {
       findings.push({
         field: 'price',
         issueCategory: 'PRICE',
@@ -110,6 +113,19 @@ export async function runDeterministicValidation(listingData, currentListingId =
         description: `Invalid price format: ${price}. Price must be a positive number greater than 0.`,
         explanation: 'Marketplace policy prohibits zero, negative, or placeholder non-numeric pricing.',
         recommendedCorrection: 'Provide a positive numerical price representing the actual offer amount.',
+        source: 'rule',
+        confidence: 'High',
+        isUnverified: false,
+      });
+    } else if (decimalPlaces > 2) {
+      findings.push({
+        field: 'price',
+        issueCategory: 'PRICE',
+        ruleId: 'RULE_PRICE_DECIMALS',
+        severity: 'Medium',
+        description: `Price (${price}) has more than 2 decimal places.`,
+        explanation: 'Currencies only support precision up to 2 decimal places.',
+        recommendedCorrection: 'Specify price with at most 2 decimal places.',
         source: 'rule',
         confidence: 'High',
         isUnverified: false,
@@ -228,42 +244,10 @@ export async function runDeterministicValidation(listingData, currentListingId =
     }
   }
 
-  // 6. Attributes Validation (Object structure, empty keys)
+  // 6. Attributes Validation (Object / Array / Map structure, missing keys, empty values, duplicate keys)
   if (attributes !== undefined && attributes !== null) {
-    const isObject = typeof attributes === 'object' && !Array.isArray(attributes);
-    if (!isObject) {
-      findings.push({
-        field: 'attributes',
-        issueCategory: 'ATTRIBUTES',
-        ruleId: 'RULE_ATTRS_TYPE',
-        severity: 'Medium',
-        description: 'Listing attributes must be formatted as a key-value object.',
-        explanation: 'Attributes are structured metadata used for faceted search and buyer comparison tables.',
-        recommendedCorrection: 'Provide attributes as key-value pairs (e.g. {"Color": "Black", "Size": "Large"}).',
-        source: 'rule',
-        confidence: 'High',
-        isUnverified: false,
-      });
-    } else {
-      const keys = attributes instanceof Map ? Array.from(attributes.keys()) : Object.keys(attributes);
-      for (const key of keys) {
-        const val = attributes instanceof Map ? attributes.get(key) : attributes[key];
-        if (!key.trim() || val === undefined || val === null || val === '') {
-          findings.push({
-            field: 'attributes',
-            issueCategory: 'ATTRIBUTES',
-            ruleId: 'RULE_ATTRS_EMPTY_VAL',
-            severity: 'Low',
-            description: `Attribute '${key}' has an empty or null value.`,
-            explanation: 'Incomplete attribute pairs cause display errors in product specification widgets.',
-            recommendedCorrection: `Fill in a valid value for '${key}' or remove this attribute key.`,
-            source: 'rule',
-            confidence: 'High',
-            isUnverified: false,
-          });
-        }
-      }
-    }
+    const { findings: attrFindings } = validateAttributePairs(attributes);
+    findings.push(...attrFindings);
   }
 
   // 7. Optional Tags Validation

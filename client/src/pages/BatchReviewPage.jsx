@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
+import { formatPrice } from '../utils/currency';
 import {
   FileCheck2,
   Upload,
@@ -340,7 +341,7 @@ export const BatchReviewPage = () => {
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{row.data.category}</td>
                         <td className="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">
-                          ${row.data.price?.toFixed(2)}
+                          {formatPrice(row.data.price, row.data.currency)}
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{row.data.seller}</td>
                         <td className="py-2.5 px-3 text-[11px]">
@@ -415,7 +416,7 @@ export const BatchReviewPage = () => {
                     <div className="flex-1 min-w-0">
                       <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">{item.title}</h4>
                       <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                        Seller: {item.seller} | Category: {item.category} | ${item.price?.toFixed(2)}
+                        Seller: {item.seller} | Category: {item.category} | {formatPrice(item.price, item.currency)}
                       </p>
                     </div>
                     <StatusBadge status={item.status} />

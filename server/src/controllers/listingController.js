@@ -2,15 +2,40 @@ import { z } from 'zod';
 import { Listing } from '../models/Listing.js';
 import { logAuditEvent } from '../services/audit/auditLogger.js';
 import { calculateListingSimilarity } from '../utils/similarity.js';
+import { normalizeAttributes, validateAttributePairs } from '../utils/attributeNormalizer.js';
 
 export const listingSchema = z.object({
-  title: z.string().min(1, 'Title is required').max(200),
-  description: z.string().min(1, 'Description is required'),
-  category: z.string().min(1, 'Category is required'),
-  price: z.number().positive('Price must be greater than 0'),
-  currency: z.string().default('USD'),
-  attributes: z.record(z.string(), z.any()).optional().default({}),
-  seller: z.string().min(1, 'Seller name is required'),
+  title: z
+    .string({ required_error: 'Title is required' })
+    .trim()
+    .min(5, 'Title must be at least 5 characters')
+    .max(150, 'Title cannot exceed 150 characters')
+    .refine((v) => v.trim().length >= 5, { message: 'Title cannot be whitespace only' }),
+  description: z
+    .string({ required_error: 'Description is required' })
+    .trim()
+    .min(20, 'Description must be at least 20 characters')
+    .max(5000, 'Description cannot exceed 5000 characters')
+    .refine((v) => v.trim().length >= 20, { message: 'Description cannot be whitespace only' }),
+  category: z
+    .string({ required_error: 'Category is required' })
+    .trim()
+    .min(1, 'Category is required')
+    .refine((v) => v.toLowerCase() !== 'select category', { message: 'Please select a valid category' }),
+  price: z
+    .number({ required_error: 'Price is required' })
+    .positive('Price must be greater than 0')
+    .refine((v) => isFinite(v) && !isNaN(v), { message: 'Price must be a valid number' })
+    .refine((v) => Number(v.toFixed(2)) === v || (String(v).split('.')[1] || '').length <= 2, {
+      message: 'Price cannot have more than 2 decimal places',
+    }),
+  currency: z.enum(['USD', 'INR', 'EUR', 'GBP']).default('USD'),
+  attributes: z.any().optional().default([]),
+  seller: z
+    .string({ required_error: 'Seller reference or name is required' })
+    .trim()
+    .min(1, 'Seller name is required')
+    .refine((v) => v.trim().length > 0, { message: 'Seller name cannot be whitespace only' }),
   tags: z.array(z.string()).optional().default([]),
   status: z
     .enum([
@@ -21,6 +46,7 @@ export const listingSchema = z.object({
       'Reviewing',
       'Changes Requested',
       'Changes Suggested',
+      'Pending Admin Approval',
       'Approved',
       'Rejected',
       'Failed',
@@ -167,28 +193,86 @@ export const getListingById = async (req, res, next) => {
 
 export const createListing = async (req, res, next) => {
   try {
-    const { title, description, category, price, currency, attributes, seller, tags, status, assignedTo } =
+    let { title, description, category, price, currency, attributes, seller, tags, status, assignedTo } =
       req.body;
 
-    const listing = await Listing.create({
-      title,
-      description,
-      category,
-      price,
-      currency: currency || 'USD',
-      attributes: attributes || {},
-      seller,
-      tags: tags || [],
-      status: status || 'Draft',
-      assignedTo: assignedTo || null,
-      originalSnapshot: {
+    const isDraft = status === 'Draft';
+
+    // Normalize attributes
+    attributes = normalizeAttributes(attributes);
+
+    // If seller role, enforce user association & prevent seller impersonation
+    if (req.user.role === 'seller') {
+      if (!seller || !seller.trim()) {
+        seller = req.user.name;
+      }
+    }
+
+    if (!isDraft) {
+      // Validate with schema for submissions
+      const parseResult = listingSchema.safeParse({
         title,
         description,
         category,
-        price,
+        price: Number(price),
         currency: currency || 'USD',
-        attributes: attributes || {},
+        attributes,
         seller,
+        tags,
+        status: status || 'Pending Review',
+        assignedTo,
+      });
+
+      if (!parseResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: parseResult.error.errors.map((e) => e.message).join(', '),
+          errors: parseResult.error.errors,
+        });
+      }
+
+      // Check attributes completeness
+      const { findings: attrFindings } = validateAttributePairs(attributes);
+      if (attrFindings.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: attrFindings.map((f) => f.description).join(', '),
+          errors: attrFindings,
+        });
+      }
+    } else {
+      // Basic type enforcement for drafts
+      if (price !== undefined && price !== null && price !== '') {
+        const numPrice = Number(price);
+        if (isNaN(numPrice) || numPrice <= 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Price must be greater than 0.',
+          });
+        }
+      }
+    }
+
+    const listing = await Listing.create({
+      title: title ? title.trim() : 'Untitled Draft',
+      description: description ? description.trim() : '',
+      category: category || 'General',
+      price: price !== undefined && price !== null && price !== '' ? Number(price) : 0.01,
+      currency: currency || 'USD',
+      attributes: attributes || [],
+      seller: seller ? seller.trim() : req.user.name,
+      tags: tags || [],
+      revision: 1,
+      status: status || 'Draft',
+      assignedTo: assignedTo || null,
+      originalSnapshot: {
+        title: title ? title.trim() : 'Untitled Draft',
+        description: description ? description.trim() : '',
+        category: category || 'General',
+        price: price !== undefined && price !== null && price !== '' ? Number(price) : 0.01,
+        currency: currency || 'USD',
+        attributes: attributes || [],
+        seller: seller ? seller.trim() : req.user.name,
         tags: tags || [],
       },
       createdBy: req.user._id,
@@ -203,13 +287,13 @@ export const createListing = async (req, res, next) => {
       action: 'LISTING_CREATED',
       before: null,
       after: listing.toJSON(),
-      metadata: { initialStatus: listing.status },
+      metadata: { initialStatus: listing.status, revision: 1 },
     });
 
     return res.status(201).json({
       success: true,
       data: listing,
-      message: 'Listing created successfully.',
+      message: isDraft ? 'Draft saved successfully.' : 'Listing submitted for quality review.',
     });
   } catch (error) {
     next(error);
@@ -232,8 +316,8 @@ export const updateListing = async (req, res, next) => {
       });
     }
 
-    // Seller cannot edit approved or under-review listings unless status is Draft or Changes Requested
-    if (req.user.role === 'seller' && !['Draft', 'Changes Requested', 'Changes Suggested'].includes(listing.status)) {
+    // Seller cannot edit approved listings
+    if (req.user.role === 'seller' && ['Approved'].includes(listing.status)) {
       return res.status(400).json({
         success: false,
         message: `Sellers cannot edit listings while in '${listing.status}' status.`,
@@ -243,7 +327,15 @@ export const updateListing = async (req, res, next) => {
     const beforeSnapshot = listing.toJSON();
     const updateData = { ...req.body, updatedBy: req.user._id };
 
-    // Prevent sellers from self-approving or directly setting status to Approved
+    if (updateData.attributes) {
+      updateData.attributes = normalizeAttributes(updateData.attributes);
+    }
+
+    if (updateData.title) updateData.title = updateData.title.trim();
+    if (updateData.description) updateData.description = updateData.description.trim();
+    if (updateData.price !== undefined) updateData.price = Number(updateData.price);
+
+    // Prevent sellers from self-approving or setting status to Approved
     if (req.user.role === 'seller' && updateData.status === 'Approved') {
       updateData.status = 'Pending Review';
     }
@@ -282,23 +374,23 @@ export const deleteListing = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Listing not found.' });
     }
 
-    // Sellers cannot delete listings
-    if (req.user.role === 'seller') {
-      return res.status(403).json({
-        success: false,
-        message: 'Forbidden: Sellers cannot delete listings.',
-      });
-    }
+    const isOwner = listing.createdBy.toString() === req.user._id.toString();
 
-    // Only creator or administrator can delete
-    if (listing.createdBy.toString() !== req.user._id.toString() && req.user.role !== 'administrator') {
+    // Sellers can delete their OWN drafts!
+    if (req.user.role === 'seller') {
+      if (!isOwner || listing.status !== 'Draft') {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden: Sellers can only delete their own Draft listings.',
+        });
+      }
+    } else if (!isOwner && req.user.role !== 'administrator') {
       return res.status(403).json({
         success: false,
         message: 'Forbidden: You do not have permission to delete this listing.',
       });
     }
 
-    const beforeSnapshot = listing.toJSON();
     await Listing.findByIdAndDelete(req.params.id);
 
     await logAuditEvent({
@@ -307,9 +399,9 @@ export const deleteListing = async (req, res, next) => {
       actorName: req.user.name,
       actorRole: req.user.role,
       action: 'LISTING_DELETED',
-      before: beforeSnapshot,
+      before: listing.toJSON(),
       after: null,
-      metadata: { deletedByRole: req.user.role },
+      metadata: { deletedStatus: listing.status },
     });
 
     return res.status(200).json({
@@ -362,7 +454,7 @@ export const assignReviewer = async (req, res, next) => {
 export const requestChanges = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
+    const { reason, fields } = req.body;
 
     if (!reason || !reason.trim()) {
       return res.status(400).json({
@@ -379,6 +471,8 @@ export const requestChanges = async (req, res, next) => {
     const previousStatus = listing.status;
     listing.status = 'Changes Requested';
     listing.reviewDecisionNotes = reason.trim();
+    listing.changeRequestReason = reason.trim();
+    listing.changeRequestFields = Array.isArray(fields) ? fields : [];
     listing.updatedBy = req.user._id;
     await listing.save();
 
@@ -389,8 +483,15 @@ export const requestChanges = async (req, res, next) => {
       actorRole: req.user.role,
       action: 'CHANGES_REQUESTED',
       before: { status: previousStatus },
-      after: { status: 'Changes Requested', reason: reason.trim() },
-      metadata: { reason: reason.trim() },
+      after: {
+        status: 'Changes Requested',
+        reason: reason.trim(),
+        fields: listing.changeRequestFields,
+      },
+      metadata: {
+        reason: reason.trim(),
+        fields: listing.changeRequestFields,
+      },
     });
 
     return res.status(200).json({
@@ -509,9 +610,38 @@ export const resubmitListing = async (req, res, next) => {
     }
 
     const previousStatus = listing.status;
+    const currentRevision = listing.revision || 1;
+
+    // Archive current snapshot into revisionHistory
+    if (!listing.revisionHistory) listing.revisionHistory = [];
+    listing.revisionHistory.push({
+      revision: currentRevision,
+      title: listing.title,
+      description: listing.description,
+      category: listing.category,
+      price: listing.price,
+      currency: listing.currency,
+      attributes: listing.attributes,
+      seller: listing.seller,
+      status: previousStatus,
+      changeRequestReason: listing.changeRequestReason || listing.reviewDecisionNotes,
+      changeRequestFields: listing.changeRequestFields || [],
+      submittedAt: listing.resubmittedAt || listing.createdAt,
+    });
+
+    listing.revision = currentRevision + 1;
     listing.status = 'Pending Review';
     listing.resubmittedAt = new Date();
     listing.updatedBy = req.user._id;
+
+    // Apply any newly provided fields on resubmission
+    if (req.body.title) listing.title = String(req.body.title).trim();
+    if (req.body.description) listing.description = String(req.body.description).trim();
+    if (req.body.category) listing.category = String(req.body.category).trim();
+    if (req.body.price !== undefined) listing.price = Number(req.body.price);
+    if (req.body.currency) listing.currency = req.body.currency;
+    if (req.body.attributes !== undefined) listing.attributes = req.body.attributes;
+
     await listing.save();
 
     await logAuditEvent({
@@ -520,14 +650,14 @@ export const resubmitListing = async (req, res, next) => {
       actorName: req.user.name,
       actorRole: req.user.role,
       action: 'LISTING_RESUBMITTED',
-      before: { status: previousStatus },
-      after: { status: 'Pending Review' },
-      metadata: {},
+      before: { status: previousStatus, revision: currentRevision },
+      after: { status: 'Pending Review', revision: listing.revision },
+      metadata: { revision: listing.revision },
     });
 
     return res.status(200).json({
       success: true,
-      message: 'Listing resubmitted for quality review.',
+      message: `Listing resubmitted for quality review (Revision ${listing.revision}).`,
       data: listing,
     });
   } catch (error) {

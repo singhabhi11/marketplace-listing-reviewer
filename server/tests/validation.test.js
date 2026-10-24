@@ -123,4 +123,80 @@ describe('Deterministic Validation Service', () => {
     const attrFindings = findings.filter((f) => f.ruleId === 'RULE_ATTRS_EMPTY_VAL');
     expect(attrFindings.length).toBe(2);
   });
+
+  it('should correctly normalize colon-separated attributes like "Dimensions: 65 x 65 x 110 cm" without false empty value error', async () => {
+    const listing = {
+      title: 'Ergonomic Mesh Office Chair with Lumbar Support',
+      description: 'Fully adjustable mesh high-back chair designed for maximum comfort during long workdays.',
+      category: 'Furniture',
+      price: 189.99,
+      seller: 'ComfortFurnishings',
+      attributes: [
+        { key: 'Dimensions: 65 x 65 x 110 cm', value: '' }, // Pasted key-value with colon
+        { key: 'Color', value: 'Grey' },
+      ],
+    };
+
+    const findings = await runDeterministicValidation(listing);
+    const attrFindings = findings.filter((f) => f.field === 'attributes');
+    expect(attrFindings.length).toBe(0);
+  });
+
+  it('should reject placeholder category "Select Category"', async () => {
+    const listing = {
+      title: 'Ergonomic Mesh Office Chair with Lumbar Support',
+      description: 'Fully adjustable mesh high-back chair designed for maximum comfort during long workdays.',
+      category: 'Select Category',
+      price: 189.99,
+      seller: 'ComfortFurnishings',
+    };
+
+    const findings = await runDeterministicValidation(listing);
+    const catFinding = findings.find((f) => f.ruleId === 'RULE_REQ_CATEGORY');
+    expect(catFinding).toBeDefined();
+    expect(catFinding.severity).toBe('Critical');
+  });
+
+  it('should flag price with more than 2 decimal places or zero price', async () => {
+    const zeroPriceListing = {
+      title: 'Valid Product Title For Testing',
+      description: 'Valid product description that contains enough characters to pass length tests.',
+      category: 'Electronics',
+      price: 0,
+      seller: 'GoodSeller',
+    };
+
+    const findingsZero = await runDeterministicValidation(zeroPriceListing);
+    expect(findingsZero.some((f) => f.ruleId === 'RULE_PRICE_POSITIVE')).toBe(true);
+
+    const manyDecimalsListing = {
+      title: 'Valid Product Title For Testing',
+      description: 'Valid product description that contains enough characters to pass length tests.',
+      category: 'Electronics',
+      price: 19.999,
+      seller: 'GoodSeller',
+    };
+
+    const findingsDecimals = await runDeterministicValidation(manyDecimalsListing);
+    expect(findingsDecimals.some((f) => f.ruleId === 'RULE_PRICE_DECIMALS')).toBe(true);
+  });
+
+  it('should detect duplicate attribute keys regardless of case or whitespace', async () => {
+    const listing = {
+      title: 'Ergonomic Mesh Office Chair with Lumbar Support',
+      description: 'Fully adjustable mesh high-back chair designed for maximum comfort during long workdays.',
+      category: 'Furniture',
+      price: 189.99,
+      seller: 'ComfortFurnishings',
+      attributes: [
+        { key: 'Color', value: 'Black' },
+        { key: ' color ', value: 'White' },
+      ],
+    };
+
+    const findings = await runDeterministicValidation(listing);
+    const dupAttrFinding = findings.find((f) => f.ruleId === 'RULE_ATTRS_DUPLICATE_KEY');
+    expect(dupAttrFinding).toBeDefined();
+    expect(dupAttrFinding.severity).toBe('Low');
+  });
 });

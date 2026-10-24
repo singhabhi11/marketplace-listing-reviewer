@@ -4,6 +4,7 @@ import { runDeterministicValidation } from './validation/deterministicValidator.
 import { retrieveRelevantPolicies } from './policy/policyRetriever.js';
 import { executeAiReview } from './ai/aiProvider.js';
 import { logAuditEvent } from './audit/auditLogger.js';
+import { formatAttributesText, normalizeAttributes } from '../utils/attributeNormalizer.js';
 
 /**
  * Orchestrates full 12-step quality review workflow for a listing.
@@ -53,21 +54,29 @@ export async function orchestrateListingReview(listingId, user) {
     ...aiResult.findings,
   ];
 
+  // Helper to extract clean excerpt without ever emitting "[object Map]" or "[object Object]"
+  const getExcerpt = (field) => {
+    if (!field || !listing[field]) return null;
+    if (field === 'attributes') {
+      return formatAttributesText(listing.attributes);
+    }
+    if (typeof listing[field] === 'object') {
+      return JSON.stringify(listing[field]).slice(0, 160);
+    }
+    return String(listing[field]).slice(0, 160);
+  };
+
   // Enrich findings with standard issueTitle, affectedField, originalExcerpt, confidenceScore
-  const enrichedFindings = mergedFindings.map((f) => ({
-    ...f,
-    affectedField: f.affectedField || f.field,
-    issueTitle: f.issueTitle || `${(f.issueCategory || 'Policy Issue').replace(/_/g, ' ')} on ${f.field}`,
-    originalExcerpt: f.originalExcerpt || (listing[f.field] ? String(listing[f.field]).slice(0, 160) : null),
-    confidenceScore:
-      f.confidenceScore !== undefined
-        ? f.confidenceScore
-        : f.confidence === 'High'
-        ? 0.95
-        : f.confidence === 'Medium'
-        ? 0.8
-        : 0.65,
-  }));
+  const enrichedFindings = mergedFindings.map((f) => {
+    const rawScore = f.confidenceScore !== undefined && f.confidenceScore !== null ? Number(f.confidenceScore) : null;
+    return {
+      ...f,
+      affectedField: f.affectedField || f.field,
+      issueTitle: f.issueTitle || `${(f.issueCategory || 'Policy Issue').replace(/_/g, ' ')} on ${f.field}`,
+      originalExcerpt: f.originalExcerpt || getExcerpt(f.field),
+      confidenceScore: rawScore,
+    };
+  });
 
   // Combine suggested revisions
   const finalSuggestedRevisions = { ...(aiResult.suggestedRevisions || {}) };
@@ -88,6 +97,7 @@ export async function orchestrateListingReview(listingId, user) {
   // Step 11: Save review result and create immutable Review record
   const review = await Review.create({
     listingId: listing._id,
+    revision: listing.revision || 1,
     originalSnapshot,
     findings: enrichedFindings,
     suggestedRevisions: finalSuggestedRevisions,

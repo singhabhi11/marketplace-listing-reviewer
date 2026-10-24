@@ -4,6 +4,7 @@ import api from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
 import { SeverityBadge } from '../components/SeverityBadge';
 import { DiffViewer } from '../components/DiffViewer';
+import { formatPrice } from '../utils/currency';
 import {
   ArrowLeft,
   FileCheck2,
@@ -171,10 +172,11 @@ export const ListingDetailPage = () => {
     );
   }
 
-  const attributesEntries =
-    listing.attributes && typeof listing.attributes === 'object'
-      ? Object.entries(listing.attributes)
-      : [];
+  const normalizedAttributes = Array.isArray(listing.attributes)
+    ? listing.attributes.filter((a) => a && (a.key || a.value))
+    : listing.attributes && typeof listing.attributes === 'object'
+    ? Object.entries(listing.attributes).map(([k, v]) => ({ key: k, value: String(v) }))
+    : [];
 
   const isOwnerOrAdmin = isAdmin || listing.createdBy?._id === user?._id;
   const isChangesRequested =
@@ -192,11 +194,14 @@ export const ListingDetailPage = () => {
             <ArrowLeft size={18} />
           </Link>
           <div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
                 {listing.title}
               </h1>
               <StatusBadge status={listing.status} />
+              <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-[11px] font-bold">
+                Revision #{listing.revision || 1}
+              </span>
               {listing.archived && (
                 <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[11px] font-bold">
                   Archived
@@ -339,20 +344,20 @@ export const ListingDetailPage = () => {
               <span>Listing Attributes & Specifications</span>
             </h2>
 
-            {attributesEntries.length === 0 ? (
+            {normalizedAttributes.length === 0 ? (
               <p className="text-xs text-slate-400 italic">No custom attributes specified.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                {attributesEntries.map(([key, value]) => (
+                {normalizedAttributes.map((attr, idx) => (
                   <div
-                    key={key}
+                    key={idx}
                     className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-700"
                   >
                     <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase block">
-                      {key}
+                      {attr.key}
                     </span>
                     <span className="text-xs font-semibold text-slate-900 dark:text-white mt-0.5 block">
-                      {String(value)}
+                      {attr.value}
                     </span>
                   </div>
                 ))}
@@ -395,7 +400,7 @@ export const ListingDetailPage = () => {
               <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-700">
                 <span className="text-slate-500 dark:text-slate-400">Price</span>
                 <span className="font-bold text-slate-900 dark:text-white text-sm">
-                  ${listing.price?.toFixed(2)} {listing.currency}
+                  {formatPrice(listing.price, listing.currency)}
                 </span>
               </div>
               <div className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-700">

@@ -75,7 +75,7 @@ const findingSchema = new mongoose.Schema(
     },
     confidenceScore: {
       type: Number,
-      default: 0.92,
+      default: null,
     },
     isUnverified: {
       type: Boolean,
@@ -83,13 +83,13 @@ const findingSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected', 'edited'],
+      enum: ['pending', 'approved', 'rejected', 'edited', 'dismissed'],
       default: 'pending',
     },
     reviewerDecision: {
       action: {
         type: String,
-        enum: ['approved', 'rejected', 'edited', null],
+        enum: ['approved', 'rejected', 'edited', 'dismissed', null],
         default: null,
       },
       appliedValue: {
@@ -132,6 +132,10 @@ const reviewSchema = new mongoose.Schema(
       ref: 'Listing',
       required: true,
       index: true,
+    },
+    revision: {
+      type: Number,
+      default: 1,
     },
     originalSnapshot: {
       type: mongoose.Schema.Types.Mixed,

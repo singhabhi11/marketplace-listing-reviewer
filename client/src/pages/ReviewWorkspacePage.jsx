@@ -6,6 +6,7 @@ import { SeverityBadge } from '../components/SeverityBadge';
 import { StatusBadge } from '../components/StatusBadge';
 import { DiffViewer } from '../components/DiffViewer';
 import { Modal } from '../components/Modal';
+import { formatPrice } from '../utils/currency';
 import {
   ArrowLeft,
   Sparkles,
@@ -26,6 +27,7 @@ import {
   MessageSquare,
   Shield,
   Gauge,
+  Calendar,
 } from 'lucide-react';
 
 export const ReviewWorkspacePage = () => {
@@ -52,14 +54,14 @@ export const ReviewWorkspacePage = () => {
   const [selectedFindingForReject, setSelectedFindingForReject] = useState(null);
   const [rejectionReason, setRejectionReason] = useState('');
 
-  const [requestChangesModalOpen, setRequestChangesModalOpen] = useState(false);
-  const [changesReason, setChangesReason] = useState('');
-
   const [confirmApproveAllOpen, setConfirmApproveAllOpen] = useState(false);
 
   const [decisionModalOpen, setDecisionModalOpen] = useState(false);
   const [decisionTargetStatus, setDecisionTargetStatus] = useState('');
   const [decisionNotes, setDecisionNotes] = useState('');
+  const [selectedChangeFields, setSelectedChangeFields] = useState([]);
+
+  const [showRevisionHistory, setShowRevisionHistory] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -131,7 +133,7 @@ export const ReviewWorkspacePage = () => {
     try {
       const res = await api.post(
         `/reviews/${review._id}/revisions/${selectedFindingForReject._id}/reject`,
-        { reason: rejectionReason }
+        { reason: rejectionReason || 'Dismissed by reviewer' }
       );
       if (res.data.success) {
         setRejectModalOpen(false);
@@ -179,7 +181,16 @@ export const ReviewWorkspacePage = () => {
   const handleOpenDecisionModal = (status) => {
     setDecisionTargetStatus(status);
     setDecisionNotes('');
+    setSelectedChangeFields([]);
     setDecisionModalOpen(true);
+  };
+
+  const toggleChangeField = (fieldName) => {
+    if (selectedChangeFields.includes(fieldName)) {
+      setSelectedChangeFields(selectedChangeFields.filter((f) => f !== fieldName));
+    } else {
+      setSelectedChangeFields([...selectedChangeFields, fieldName]);
+    }
   };
 
   const handleConfirmDecision = async () => {
@@ -190,12 +201,23 @@ export const ReviewWorkspacePage = () => {
           return;
         }
         await api.post(`/listings/${listingId}/request-changes`, {
-          reason: decisionNotes,
+          reason: decisionNotes.trim(),
+          fields: selectedChangeFields,
+        });
+      } else if (decisionTargetStatus === 'Rejected') {
+        if (!decisionNotes.trim()) {
+          alert('A rejection reason is mandatory when rejecting a listing.');
+          return;
+        }
+        await api.patch(`/reviews/${review._id}/decision`, {
+          status: 'Rejected',
+          notes: decisionNotes.trim(),
         });
       } else {
+        // Approved
         await api.patch(`/reviews/${review._id}/decision`, {
-          status: decisionTargetStatus,
-          reviewNotes: decisionNotes,
+          status: 'Approved',
+          notes: decisionNotes.trim(),
         });
       }
 
@@ -237,6 +259,17 @@ export const ReviewWorkspacePage = () => {
     (f) => f.status === 'pending' && f.suggestedRevision
   ).length;
 
+  const unresolvedCriticalCount = allFindings.filter(
+    (f) => f.status === 'pending' && f.severity === 'Critical'
+  ).length;
+
+  const unresolvedHighCount = allFindings.filter(
+    (f) => f.status === 'pending' && f.severity === 'High'
+  ).length;
+
+  const isDecisionMade =
+    listing.status === 'Approved' || listing.status === 'Rejected';
+
   return (
     <div className="space-y-6">
       {/* Top Header & Context */}
@@ -249,11 +282,14 @@ export const ReviewWorkspacePage = () => {
             <ArrowLeft size={18} />
           </Link>
           <div>
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <h1 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
                 AI Review Workspace
               </h1>
               <StatusBadge status={listing.status} />
+              <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 text-[11px] font-bold">
+                Revision #{listing.revision || 1}
+              </span>
               {review?.providerMetadata?.fallbackUsed && (
                 <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 text-[11px] font-medium flex items-center gap-1">
                   <Cpu size={12} />
@@ -262,8 +298,8 @@ export const ReviewWorkspacePage = () => {
               )}
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Listing: <strong className="text-slate-800 dark:text-slate-200">{listing.title}</strong> ($
-              {listing.price} {listing.currency}) | Seller:{' '}
+              Listing: <strong className="text-slate-800 dark:text-slate-200">{listing.title}</strong> (
+              {formatPrice(listing.price, listing.currency)}) | Seller:{' '}
               <strong className="text-slate-800 dark:text-slate-200">{listing.seller}</strong>
             </p>
           </div>
@@ -321,6 +357,53 @@ export const ReviewWorkspacePage = () => {
         )}
       </div>
 
+      {/* Revision History Collapsible Banner */}
+      {listing.revisionHistory && listing.revisionHistory.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 shadow-xs">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Calendar size={16} className="text-blue-600" />
+              <h3 className="text-xs font-bold text-slate-900 dark:text-white">
+                Submission Revisions ({listing.revisionHistory.length} previous versions)
+              </h3>
+            </div>
+            <button
+              onClick={() => setShowRevisionHistory(!showRevisionHistory)}
+              className="text-xs font-semibold text-blue-600 hover:underline"
+            >
+              {showRevisionHistory ? 'Hide Previous Versions' : 'View Previous Versions'}
+            </button>
+          </div>
+
+          {showRevisionHistory && (
+            <div className="mt-3 space-y-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+              {listing.revisionHistory.map((rev, idx) => (
+                <div
+                  key={idx}
+                  className="p-3 bg-slate-50 dark:bg-slate-900 rounded-xl text-xs space-y-1.5 border border-slate-200 dark:border-slate-700"
+                >
+                  <div className="flex items-center justify-between text-slate-500">
+                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                      Revision #{rev.revision}
+                    </span>
+                    <span>{new Date(rev.submittedAt).toLocaleString()}</span>
+                  </div>
+                  <p className="text-slate-700 dark:text-slate-300">
+                    <strong>Title:</strong> {rev.title} | <strong>Price:</strong>{' '}
+                    {formatPrice(rev.price, rev.currency)}
+                  </p>
+                  {rev.changeRequestReason && (
+                    <div className="p-2 bg-purple-50 dark:bg-purple-950/40 rounded-lg text-purple-900 dark:text-purple-200 text-[11px]">
+                      <strong>Reviewer Note:</strong> {rev.changeRequestReason}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {!review && (
         <div className="bg-white dark:bg-slate-800 p-12 rounded-2xl border border-slate-200 dark:border-slate-700 text-center space-y-4">
           <Sparkles size={36} className="text-blue-500 mx-auto" />
@@ -348,75 +431,72 @@ export const ReviewWorkspacePage = () => {
           {/* Findings Filter Bar */}
           <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mr-1">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mr-2">
                 <Filter size={14} />
-                <span>Severity:</span>
+                <span>Filter By:</span>
               </span>
-              {['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((sev) => {
-                const count =
-                  sev === 'ALL'
-                    ? allFindings.length
-                    : allFindings.filter((f) => f.severity.toUpperCase() === sev).length;
 
-                return (
-                  <button
-                    key={sev}
-                    onClick={() => setSeverityFilter(sev)}
-                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${
-                      severityFilter === sev
-                        ? 'bg-blue-600 text-white font-semibold shadow-xs'
-                        : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
-                    }`}
-                  >
-                    {sev} ({count})
-                  </button>
-                );
-              })}
+              {/* Severity filter buttons */}
+              {['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((sev) => (
+                <button
+                  key={sev}
+                  onClick={() => setSeverityFilter(sev)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors ${
+                    severityFilter === sev
+                      ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xs'
+                      : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600'
+                  }`}
+                >
+                  {sev}
+                </button>
+              ))}
             </div>
 
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-500 dark:text-slate-400">Source:</span>
-              <select
-                value={sourceFilter}
-                onChange={(e) => setSourceFilter(e.target.value)}
-                className="px-2.5 py-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-700 dark:text-slate-200"
-              >
-                <option value="ALL">All Sources</option>
-                <option value="AI">AI Grounded</option>
-                <option value="RULE">Deterministic Rule</option>
-              </select>
+              <span className="text-slate-400">Total Findings:</span>
+              <strong className="text-slate-900 dark:text-white font-bold">{allFindings.length}</strong>
+              <span className="text-slate-400 ml-2">Filtered:</span>
+              <strong className="text-slate-900 dark:text-white font-bold">{filteredFindings.length}</strong>
             </div>
           </div>
 
-          {/* Findings List */}
+          {/* Findings Cards List */}
           <div className="space-y-4">
             {filteredFindings.length === 0 ? (
-              <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 text-center text-slate-400 text-xs">
-                No issues match the selected severity and source filters.
+              <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl border border-slate-200 dark:border-slate-700 text-center text-slate-500 text-xs">
+                No policy issues or suggestions matching current filters.
               </div>
             ) : (
-              filteredFindings.map((finding, idx) => {
-                const isDecisionMade = finding.status !== 'pending';
+              filteredFindings.map((finding) => {
+                const excerptString =
+                  finding.originalExcerpt && typeof finding.originalExcerpt === 'string'
+                    ? finding.originalExcerpt
+                    : typeof finding.originalExcerpt === 'object' && finding.originalExcerpt !== null
+                    ? JSON.stringify(finding.originalExcerpt)
+                    : null;
+
+                const isCleanExcerpt =
+                  excerptString && excerptString !== '[object Map]' && excerptString !== '[object Object]';
 
                 return (
                   <div
-                    key={finding._id || idx}
+                    key={finding._id}
                     className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs overflow-hidden transition-all hover:border-slate-300 dark:hover:border-slate-600"
                   >
                     {/* Finding Header */}
-                    <div className="p-5 border-b border-slate-100 dark:border-slate-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-900/40">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <SeverityBadge severity={finding.severity} size="sm" />
-                        <span className="px-2 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 font-mono text-[11px] font-semibold">
+                    <div className="p-4 bg-slate-50/70 dark:bg-slate-900/40 border-b border-slate-100 dark:border-slate-700 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <SeverityBadge severity={finding.severity} />
+                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-200 px-2 py-0.5 bg-white dark:bg-slate-800 rounded-md border border-slate-200 dark:border-slate-700">
                           Field: {finding.affectedField || finding.field}
                         </span>
-                        <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                          {finding.issueTitle || finding.issueCategory}
+                        <span className="text-xs font-bold text-slate-900 dark:text-white">
+                          {finding.issueTitle || `${finding.issueCategory} on ${finding.field}`}
                         </span>
-                        <span className="text-[10px] uppercase font-bold text-slate-400 px-1.5 py-0.5 bg-slate-100 dark:bg-slate-750 rounded">
+                        <span className="text-[10px] uppercase font-bold text-slate-400 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded">
                           Source: {finding.source}
                         </span>
-                        {finding.confidenceScore && (
+                        {finding.confidenceScore !== null && finding.confidenceScore !== undefined && (
                           <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <Gauge size={11} />
                             <span>{Math.round(finding.confidenceScore * 100)}% match</span>
@@ -464,14 +544,14 @@ export const ReviewWorkspacePage = () => {
                         </p>
                       </div>
 
-                      {/* Original Excerpt Highlight (if present) */}
-                      {finding.originalExcerpt && (
+                      {/* Original Excerpt Highlight (Clean String Only) */}
+                      {isCleanExcerpt && (
                         <div className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs">
                           <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                             Problematic Listing Excerpt:
                           </span>
-                          <span className="font-mono text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 px-1.5 py-0.5 rounded">
-                            "{finding.originalExcerpt}"
+                          <span className="font-mono text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/50 px-1.5 py-0.5 rounded break-all">
+                            "{excerptString}"
                           </span>
                         </div>
                       )}
@@ -549,6 +629,7 @@ export const ReviewWorkspacePage = () => {
                               onClick={() => openRejectModal(finding)}
                               disabled={finding.status === 'rejected'}
                               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900 text-rose-700 dark:text-rose-300 text-xs font-semibold rounded-lg border border-rose-200 dark:border-rose-800 transition-colors disabled:opacity-40"
+                              title="Dismiss / Reject this single finding"
                             >
                               <XCircle size={13} />
                               <span>Reject Finding</span>
@@ -647,19 +728,19 @@ export const ReviewWorkspacePage = () => {
         </div>
       </Modal>
 
-      {/* Reject Suggestion Modal */}
+      {/* Reject Suggestion / Dismiss Finding Modal */}
       <Modal
         isOpen={rejectModalOpen}
         onClose={() => setRejectModalOpen(false)}
-        title="Reject Suggestion"
+        title="Dismiss / Reject Finding"
       >
         <div className="space-y-4">
           <p className="text-xs text-slate-600 dark:text-slate-300">
-            Please provide an optional reason for rejecting this finding (recorded in the audit history):
+            Dismissing this finding removes it from the active blocking findings. Provide an optional justification:
           </p>
           <input
             type="text"
-            placeholder="e.g. Verified legitimate trademark holder / Context approved"
+            placeholder="e.g. Verified legitimate attribute / Context approved"
             value={rejectionReason}
             onChange={(e) => setRejectionReason(e.target.value)}
             className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
@@ -675,7 +756,7 @@ export const ReviewWorkspacePage = () => {
               onClick={handleConfirmReject}
               className="px-4 py-2 bg-rose-600 text-white text-xs font-semibold rounded-lg hover:bg-rose-700"
             >
-              Confirm Rejection
+              Confirm Dismissal
             </button>
           </div>
         </div>
@@ -688,11 +769,56 @@ export const ReviewWorkspacePage = () => {
         title={`Finalize Decision: ${decisionTargetStatus}`}
       >
         <div className="space-y-4">
-          <p className="text-xs text-slate-600 dark:text-slate-300">
-            {decisionTargetStatus === 'Changes Requested'
-              ? 'Please describe the mandatory changes the seller must make before approval:'
-              : `Add optional reviewer notes for marking this listing as ${decisionTargetStatus}:`}
-          </p>
+          {decisionTargetStatus === 'Changes Requested' && (
+            <div className="space-y-3">
+              <p className="text-xs text-slate-600 dark:text-slate-300">
+                Select the specific fields requiring seller correction:
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {['title', 'description', 'category', 'price', 'attributes'].map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => toggleChangeField(f)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors capitalize ${
+                      selectedChangeFields.includes(f)
+                        ? 'bg-purple-600 text-white border-purple-600'
+                        : 'bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {f}
+                  </button>
+                ))}
+              </div>
+
+              <p className="text-xs text-slate-600 dark:text-slate-300 font-semibold pt-1">
+                Mandatory reason note explaining what the seller must fix:
+              </p>
+            </div>
+          )}
+
+          {decisionTargetStatus === 'Approved' && (
+            <div>
+              {unresolvedCriticalCount > 0 ? (
+                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl text-xs text-amber-800 dark:text-amber-300 mb-3 flex items-start gap-2">
+                  <AlertTriangle size={16} className="shrink-0 mt-0.5 text-amber-600" />
+                  <span>
+                    Warning: There are <strong>{unresolvedCriticalCount} unresolved Critical findings</strong>. Approving will override these flags.
+                  </span>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-600 dark:text-slate-300 mb-2">
+                  Are you sure you want to approve this listing? All required policy validations have been inspected.
+                </p>
+              )}
+            </div>
+          )}
+
+          {decisionTargetStatus === 'Rejected' && (
+            <p className="text-xs text-rose-600 dark:text-rose-400 font-semibold">
+              A clear rejection reason is mandatory to inform the seller why this listing cannot be listed:
+            </p>
+          )}
 
           <textarea
             rows={4}
@@ -700,10 +826,11 @@ export const ReviewWorkspacePage = () => {
             onChange={(e) => setDecisionNotes(e.target.value)}
             placeholder={
               decisionTargetStatus === 'Changes Requested'
-                ? 'Mandatory: Explain what needs to be changed (e.g. Remove non-standard medical claims in description)'
-                : 'Optional reviewer notes for the audit trail'
+                ? 'Mandatory: Detail what the seller needs to fix (e.g. Update dimensions format, remove extreme medical claims)...'
+                : decisionTargetStatus === 'Rejected'
+                ? 'Mandatory: Reason for outright rejection (e.g. Prohibited replica goods)...'
+                : 'Optional reviewer notes for the permanent audit trail'
             }
-            required={decisionTargetStatus === 'Changes Requested'}
             className="w-full p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
           />
 

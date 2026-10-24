@@ -197,4 +197,130 @@ describe('Review Orchestration & Human Approval Workflows', () => {
     expect(res.body.summary.validCount).toBe(1);
     expect(res.body.summary.invalidCount).toBe(1);
   });
+
+  it('should allow reviewer to request changes with specified fields and reason', async () => {
+    const res = await request(app)
+      .post(`/api/listings/${testListing._id}/request-changes`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        reason: 'Please fix trademark infringement and clarify brand provenance.',
+        fields: ['title', 'description'],
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const updated = await Listing.findById(testListing._id);
+    expect(updated.status).toBe('Changes Requested');
+    expect(updated.changeRequestReason).toContain('trademark infringement');
+    expect(updated.changeRequestFields).toEqual(['title', 'description']);
+  });
+
+  it('should allow seller to resubmit listing, creating revision history and setting status to Pending Review', async () => {
+    // Put listing in Changes Requested status
+    await Listing.findByIdAndUpdate(testListing._id, {
+      status: 'Changes Requested',
+      changeRequestReason: 'Fix title',
+      changeRequestFields: ['title'],
+      revision: 1,
+    });
+
+    const resubmitRes = await request(app)
+      .post(`/api/listings/${testListing._id}/resubmit`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({
+        title: 'Authentic Mechanical Timepiece - Stainless Steel Classic',
+        description: 'Authentic high-precision automatic watch crafted with sapphire crystal and stainless steel band.',
+        category: 'Clothing & Apparel',
+        price: 249.99,
+        currency: 'USD',
+        attributes: [{ key: 'Material', value: 'Stainless Steel' }],
+      });
+
+    expect(resubmitRes.status).toBe(200);
+    expect(resubmitRes.body.data.revision).toBe(2);
+    expect(resubmitRes.body.data.status).toBe('Pending Review');
+    expect(resubmitRes.body.data.revisionHistory.length).toBe(1);
+    expect(resubmitRes.body.data.revisionHistory[0].title).toBe('LUXURY REPLICA WATCH WITH AUTOMATIC MOVEMENT');
+  });
+
+  it('should allow reviewer to dismiss an individual finding without changing listing status', async () => {
+    const reviewRes = await request(app)
+      .post(`/api/listings/${testListing._id}/reviews`)
+      .set('Authorization', `Bearer ${authToken}`);
+
+    const reviewId = reviewRes.body.data._id;
+    const review = await Review.findById(reviewId);
+    const targetFinding = review.findings[0];
+
+    const dismissRes = await request(app)
+      .post(`/api/reviews/${reviewId}/findings/${targetFinding._id}/dismiss`)
+      .set('Authorization', `Bearer ${authToken}`)
+      .send({ reason: 'Verified by reviewer as acceptable context.' });
+
+    expect(dismissRes.status).toBe(200);
+    expect(dismissRes.body.success).toBe(true);
+
+    const updatedReview = await Review.findById(reviewId);
+    const updatedFinding = updatedReview.findings.id(targetFinding._id);
+    expect(updatedFinding.status).toBe('dismissed');
+
+    // Listing status should remain unchanged from before the finding was dismissed
+    const listing = await Listing.findById(testListing._id);
+    expect(listing.status).toBe('Changes Requested');
+  });
+
+  it('should allow seller to delete their own draft but forbid deleting submitted listings', async () => {
+    // Create a seller user
+    const sellerRes = await request(app)
+      .post('/api/auth/register')
+      .send({
+        name: 'Seller John',
+        email: 'seller_john@marketplace.local',
+        password: 'Password123!',
+        role: 'seller',
+      });
+    const sellerToken = sellerRes.body.token;
+    const sellerUser = await User.findOne({ email: 'seller_john@marketplace.local' });
+
+    // Create a draft listing owned by seller
+    const draftListing = await Listing.create({
+      title: 'Incomplete Draft Listing Under Construction',
+      description: 'Draft listing description that meets minimal draft criteria.',
+      category: 'Electronics',
+      price: 50.0,
+      currency: 'EUR',
+      seller: 'Seller John',
+      status: 'Draft',
+      createdBy: sellerUser._id,
+    });
+
+    // Seller deletes their own draft -> should succeed
+    const delDraftRes = await request(app)
+      .delete(`/api/listings/${draftListing._id}`)
+      .set('Authorization', `Bearer ${sellerToken}`);
+
+    expect(delDraftRes.status).toBe(200);
+    expect(delDraftRes.body.success).toBe(true);
+
+    // Create a submitted listing owned by seller
+    const submittedListing = await Listing.create({
+      title: 'Submitted Listing Awaiting Review By Team',
+      description: 'Full listing description that is awaiting reviewer evaluation.',
+      category: 'Electronics',
+      price: 150.0,
+      currency: 'INR',
+      seller: 'Seller John',
+      status: 'Pending Review',
+      createdBy: sellerUser._id,
+    });
+
+    // Seller tries to delete submitted listing -> should be 403 Forbidden
+    const delSubmittedRes = await request(app)
+      .delete(`/api/listings/${submittedListing._id}`)
+      .set('Authorization', `Bearer ${sellerToken}`);
+
+    expect(delSubmittedRes.status).toBe(403);
+    expect(delSubmittedRes.body.success).toBe(false);
+  });
 });

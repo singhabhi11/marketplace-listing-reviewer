@@ -35,6 +35,7 @@ router.post('/:id/request-changes', requireRole('administrator', 'reviewer'), re
 router.post('/:id/duplicate', duplicateListing);
 router.patch('/:id/archive', toggleArchive);
 router.patch('/:id/resubmit', resubmitListing);
+router.post('/:id/resubmit', resubmitListing);
 
 // Nested reviews and audit for listings
 router.post('/:id/reviews', requireRole('administrator', 'reviewer'), triggerListingReview);

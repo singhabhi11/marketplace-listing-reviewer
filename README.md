@@ -1,20 +1,53 @@
 # ListingGuard — Marketplace Listing Quality & Policy Reviewer
 
-A full-stack, enterprise-grade MERN system that reviews product and service listings against marketplace policies and brand content guidelines. It pairs a **deterministic validation engine** with **retrieval-augmented AI policy grounding (RAG)**, structured JSON schema validation, **Recharts visual analytics**, **role-based access control (RBAC)**, and an **interactive human reviewer approval workspace**.
+[![MERN Stack](https://img.shields.io/badge/Stack-MERN-blue.svg)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/)
+[![Vite](https://img.shields.io/badge/Vite-5.4-purple.svg)](https://vitejs.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38bdf8.svg)](https://tailwindcss.com/)
+[![Tests](https://img.shields.io/badge/Tests-26%2F26%20Passing-brightgreen.svg)](https://vitest.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+An enterprise-grade, full-stack MERN application that reviews product and service listings against active marketplace policies and brand content guidelines. It unifies a **deterministic pattern-validation engine** with **retrieval-augmented AI policy grounding (RAG)**, structured JSON schema validation, **Recharts visual analytics**, comprehensive **role-based access control (RBAC)**, and an **interactive human reviewer approval workspace**.
 
 > [!IMPORTANT]
-> The system strictly adheres to marketplace safety controls: **listings are never automatically published to a live marketplace**, and **AI suggestions never overwrite listing fields without explicit human reviewer approval**. Public registration never grants administrator privileges.
+> **Core Marketplace Safety Invariants**:
+> 1. **No Auto-Publishing**: Listings are **never** automatically published or synced to external live marketplaces.
+> 2. **Human Review Invariant**: AI recommendations **never** overwrite database listing fields without explicit human reviewer authorization.
+> 3. **Strict Privilege Guard**: Public registration never grants administrator privileges. Roles are strictly verified on the backend.
+> 4. **Anti-Hallucination & Grounding**: Every cited policy section is cross-checked against active policy documents; ungrounded citations are demoted to unverified suggestions.
 
 ---
 
-## 1. Key Capabilities & Workflow Architecture
+## Live Deployments & Demo Credentials
+
+- **Live Backend API**: [https://marketplace-listing-reviewer-server.onrender.com](https://marketplace-listing-reviewer-server.onrender.com)
+- **API Health Check**: [https://marketplace-listing-reviewer-server.onrender.com/api/health](https://marketplace-listing-reviewer-server.onrender.com/api/health)
+- **Live Frontend**: [https://marketplace-listing-reviewer.onrender.com](https://marketplace-listing-reviewer.onrender.com)
+
+### Pre-Seeded Test Accounts
+
+The database comes pre-seeded with three organizational personas for evaluation:
+
+| Persona / Role | Email | Password | Access Scope & Responsibilities |
+| :--- | :--- | :--- | :--- |
+| **System Administrator** | `admin@marketplace.local` | `AdminPass123!` | Platform oversight, User Management roster (`/users`), change user roles, suspend/activate accounts, Policy Library authoring (`/policies`), CSV compliance reports (`/reports`), and audit logs (`/audit`). |
+| **Marketplace Reviewer** | `reviewer@marketplace.local` | `ReviewerPass123!` | Audit workspace (`/reviews`), run deterministic & AI reviews, inspect policy citations, approve revisions, custom inline edit, reject suggestions, request changes with mandatory notes, and batch reviews. |
+| **Seller / Creator** | `seller@marketplace.local` | `SellerPass123!` | Create listings (`/listings/new`), manage drafts, view review findings and feedback notes, edit and resubmit listings. *(Forbidden from reviewing, approving, or deleting catalog listings).* |
+
+*(You can also use the registration page to self-register with any of the 3 roles for testing).*
+
+---
+
+## 1. System Architecture
+
+### A. End-to-End Workflow Architecture
 
 ```mermaid
 flowchart TD
     A["Listing Input (Web Form / CSV Batch)"] --> B["Deterministic Validation Engine"]
     B --> C{"Deterministic Pass / Critical Issues"}
     C --> D["Active Policy & Brand Guide Retrieval (RAG)"]
-    D --> E["LLM Provider Call (Google Gemini / OpenAI / Fallback)"]
+    D --> E["LLM Provider Call (Google Gemini / OpenAI / Heuristic Fallback)"]
     E --> F["Strict JSON Schema Validation (Zod)"]
     F --> G["Policy Citation Grounding Verification"]
     G --> H["Merge Deterministic & AI Findings"]
@@ -22,293 +55,253 @@ flowchart TD
     I --> J["Interactive Review Workspace"]
     J --> K{"Human Reviewer Decision"}
     K -- "Approve Suggestion" --> L["Apply Field Revision & Log Audit Event"]
-    K -- "Custom Edit & Approve" --> M["Apply Custom Value & Log Audit Event"]
+    K -- "Custom Edit & Approve" --> M["Apply Custom Text & Log Audit Event"]
     K -- "Reject Suggestion" --> N["Preserve Listing & Record Rejection Reason"]
     K -- "Request Changes" --> P["Status: Changes Requested & Notify Author"]
     K -- "Mark Approved / Rejected" --> O["Update Listing Final Lifecycle State"]
 ```
 
-### A. Enterprise Role-Based Access Control (RBAC)
-- **Administrator**: Full platform oversight, user management (`/users`), user role changes, account suspension/activation, policy library authoring (`/policies`), system & AI diagnostics (`/settings`), compliance reports with CSV exports (`/reports`), and audit trail (`/audit`).
-- **Reviewer**: Audits listings, runs AI-assisted and rule-based validation, compares original vs suggested revisions, approves/rejects suggestions, requests changes with mandatory revision notes, assigns reviews, batch reviews.
-- **Seller / Listing Creator**: Submits listings, manages drafts, views compliance findings and reviewer feedback notes, updates listings, and resubmits for review. *Strictly forbidden from reviewing, approving, rejecting, or deleting catalog listings.*
+### B. Policy Grounding & Citation Sequence
 
-### B. Deterministic Validation Engine
-- Evaluates data using ordinary, deterministic code before/alongside AI review.
-- Checks required fields (`title`, `description`, `category`, `price`, `seller`).
-- Validates price format (strictly positive numeric, supported currency codes, upper platform threshold).
-- Enforces configurable title length (10–150 chars) and description length (30–5000 chars).
-- Validates categories against configurable supported categories list.
-- Checks flexible attribute key-values for completeness and malformed objects.
-- Validates optional tags formatting and max counts.
-- **Duplicate & Near-Duplicate Detection**: Evaluates token-based Jaccard and normalized Levenshtein similarity against existing database listings with explicit false-positive disclaimers.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Reviewer as Human Reviewer
+    participant Client as React Dashboard
+    participant API as Review Controller
+    participant Engine as Review Orchestrator
+    participant RAG as Policy Retriever
+    participant AI as AI Provider (Gemini / Fallback)
+    participant DB as MongoDB
 
-### C. Retrieval-Augmented AI Policy Grounding & Citation Verification
-- Retrieves active policy clauses from `PolicySection` based on category relevance and keyword token scoring.
-- Prompts configured LLM (Google Gemini / OpenAI) using **prompt injection defense**:
-  - Encloses listing content in strict `<listing_data>` boundaries.
-  - Instructs model that listing content is untrusted seller data, not system instructions.
-- Enforces strict structured JSON schema via Zod.
-- **Policy Citation Verification**: Checks every AI-generated `policySectionId` against actual retrieved active policy sections. If a citation was hallucinated, it is stripped and demoted to an `unverified recommendation`.
-- **Deterministic Heuristic Fallback**: If the AI provider key is unset or external API fails, the backend seamlessly switches to pattern-matching heuristic checks (prohibited terms, medical miracles, guarantee hype, ALL CAPS shouting) with zero downtime and explicit metadata indicating fallback was used.
-
-### D. Human Review & Approval Workspace
-- Side-by-side / diff comparison between original and proposed wording.
-- Single-click **Approve Suggestion**, **Edit Before Approving**, or **Reject Suggestion**.
-- **Request Changes**: Enables reviewers to send listings back to sellers with mandatory remediation reasons.
-- Batch **Approve All Eligible Revisions** with explicit confirmation dialog.
-- Re-run quality review on demand.
-- Append-only immutable audit trail recording every change, before/after snapshots, reviewer identity, and timestamp.
-
-### E. Analytics, Reporting & CSV Export
-- Interactive **Recharts** visualizations:
-  - Donut / Pie chart: Listing catalog compliance status distribution.
-  - Bar chart: Policy violations by severity level (Critical, High, Medium, Low).
-- Authorized CSV exports:
-  - **Export Listings CSV** (`/api/reports/export-listings`): Full catalog with pricing, category, status, and seller.
-  - **Export Audit Findings CSV** (`/api/reports/export-reviews`): Detailed policy violations, citations, severity, and timestamps.
-- System diagnostics: Database connectivity, AI provider status, API key verification, and uptime.
+    Reviewer->>Client: Click "Run Quality Review"
+    Client->>API: POST /api/listings/:id/reviews
+    API->>Engine: executeReviewWorkflow(listing)
+    Engine->>Engine: Run Deterministic Validators (Price, Length, Duplicates)
+    Engine->>RAG: retrieveRelevantPolicies(listing.category, text)
+    RAG-->>Engine: Grounded Policy Sections
+    alt LLM API Key Configured
+        Engine->>AI: executeAiReview(listing, policies) with Prompt Injection Defense
+        AI-->>Engine: Structured JSON Output (Zod Verified)
+    else No API Key / Network Failure
+        Engine->>Engine: runHeuristicFallbackReview() (Deterministic Engine)
+    end
+    Engine->>Engine: verifyPolicyCitations(findings, policies)
+    Engine->>DB: Save Review Snapshot & Audit Event
+    DB-->>API: Saved Review Object
+    API-->>Client: 200 OK Review Findings + Diffs
+    Client-->>Reviewer: Render Workspace with Citations & DiffViewer
+```
 
 ---
 
-## 2. Technology Stack
+## 2. Functional Scope & Feature Highlights
 
-- **Frontend**: React.js (Vite), Tailwind CSS (Dark/Light themes), React Router v6, Axios, React Hook Form, Lucide React icons, Recharts data visualization.
-- **Backend**: Node.js, Express.js, MongoDB with Mongoose, JWT authentication with secure HTTP-only cookies and bcrypt password hashing, Zod schema validation, Multer, Helmet, CORS, Express Rate Limit.
-- **AI Integration**: Google Generative AI (`@google/generative-ai`), OpenAI REST API fallback, and deterministic rule-engine fallback.
-- **Testing**: Vitest, Supertest, React Testing Library, jsdom, MongoDB Memory Server.
+### A. Role-Based Access Control (RBAC)
+- **Role Verification on Server**: Every protected endpoint enforces `protect` and `authorize(...)` middleware. Roles submitted during public registration are sanitized and validated.
+- **Dedicated User Profile**: Accessible from the top navigation avatar pill (`/profile`), displays initials, email, assigned role badge, account status, and password change form.
+- **Administrator Roster Management (`/users`)**: Search, filter, modify roles, and toggle user active/suspended status with real-time feedback.
+
+### B. Deterministic Validation & Duplicate Engine
+- **Field Constraints**: Validates required fields (`title`, `description`, `category`, `price`, `seller`), positive numeric pricing, supported currencies, title bounds (10–150 chars), and description bounds (30–5000 chars).
+- **Duplicate & Near-Duplicate Detection**: Evaluates Jaccard token overlap and normalized Levenshtein similarity against existing listings in the database, surfacing warnings with explicit false-positive disclaimers.
+
+### C. Retrieval-Augmented Policy Grounding & Safety
+- **RAG Policy Matching**: Retrieves policy clauses based on category relevancy and keyword indexing.
+- **Prompt Injection Defense**: Encapsulates user listing content inside strict `<listing_data>` XML boundaries and explicitly instructs the model to ignore instructions contained in seller data.
+- **Anti-Hallucination Code Gate**: Verifies every AI-produced citation section ID against active database policies. Hallucinated codes are demoted to `unverified recommendation`.
+- **Zero-Key Deterministic Fallback**: Operates with 100% functionality without requiring external API keys.
+
+### D. Human Review Workspace & Word-Level DiffViewer
+- **Side-by-Side Diff Comparison**: Word-level visual diff highlighting additions (`bg-emerald-100`) and deletions (`bg-rose-100`).
+- **Granular Actions**: Single-click **Approve Suggestion**, **Edit Before Approving**, or **Reject Suggestion**.
+- **Request Changes Flow**: Reviewers request changes with mandatory notes; sellers receive clear feedback and can **Fix & Resubmit**.
+- **Batch Processing Workspace (`/batch-review`)**: Multi-listing review orchestration, CSV listing import, and pre-flight validation.
+
+### E. Analytics & Authorized CSV Exports
+- **Recharts Visualizations**: Interactive Donut/Pie chart for listing compliance status and Bar chart for violation severities.
+- **CSV Data Export (`/reports`)**:
+  - `GET /api/reports/export-listings`: Full listing catalog export.
+  - `GET /api/reports/export-reviews`: Detailed policy violation audit findings with citations and timestamps.
+
+### F. Theme System
+- Complete Dark & Light mode toggle with class-based persistence in `localStorage` and `document.documentElement`, synchronized across all components.
 
 ---
 
-## 3. Directory Structure
+## 3. Technology Stack
 
-```
-listing-reviewer/
-├── client/                     # Vite + React Frontend
-│   ├── src/
-│   │   ├── components/         # SeverityBadge, StatusBadge, DiffViewer, Modal, Navbar, Sidebar
-│   │   ├── context/            # AuthContext (JWT session, RBAC, theme state)
-│   │   ├── layouts/            # MainLayout
-│   │   ├── pages/              # Dashboard, Listings, ListingForm, ReviewWorkspace, Policies,
-│   │   │                       # Batch, Audit, Settings, Profile, UserManagement, Reports,
-│   │   │                       # ForgotPassword, ResetPassword, Login, Register
-│   │   ├── services/           # Axios API client with interceptors
-│   │   └── test/               # React Testing Library unit tests
-│   ├── index.html
-│   ├── tailwind.config.js
-│   └── vite.config.js
-├── server/                     # Node.js + Express Backend
-│   ├── src/
-│   │   ├── config/             # DB & environment configuration
-│   │   ├── controllers/        # Auth, Listing, Review, Policy, Batch, Audit, User, Report
-│   │   ├── middleware/         # Auth, Roles, Zod Validation, RateLimiter, ErrorHandler
-│   │   ├── models/             # User, Listing, PolicyDocument, PolicySection, Review, AuditEvent, BatchJob, Setting
-│   │   ├── routes/             # RESTful API route definitions
-│   │   ├── services/           # Deterministic Validator, Policy Retriever, AI Provider, Heuristic Fallback, Orchestrator
-│   │   └── utils/              # Seed data generator & String similarity algorithms
-│   ├── tests/                  # Vitest + Supertest integration tests (Auth, Policy, Review, Validation)
-│   └── vitest.config.js
-├── .vscode/                    # VSCode workspace debug configurations
-│   └── launch.json
-├── package.json                # Monorepo root scripts (dev, test, build)
-├── .env.example                # Environment variable template
-├── render.yaml                 # Render Blueprint configuration for free 1-click cloud deploy
-├── AGENT_USAGE.md              # AI Agent transparency & prompt audit log
-└── README.md                   # Full documentation & setup guide
-```
+| Layer | Technologies |
+|---|---|
+| **Frontend** | React 18, Vite 5.4, Tailwind CSS 3.4, React Router v6, Axios, React Hook Form, Lucide React, Recharts |
+| **Backend** | Node.js (v18+), Express.js 4, Mongoose 8, JWT with HTTP-only cookies, bcryptjs, Zod 4, Helmet, CORS, Express Rate Limit |
+| **AI & Grounding** | Official Google Generative AI SDK (`@google/generative-ai`), OpenAI REST API fallback, Heuristic Pattern Matcher fallback |
+| **Testing** | Vitest 3, Supertest, React Testing Library, jsdom, MongoDB Memory Server |
+| **Cloud Hosting** | Render (Web Service & Static Site), MongoDB Atlas (M0 Shared Cluster) |
 
 ---
 
 ## 4. Setup Instructions Step by Step for VSCode
 
-Follow these exact steps to set up and run the project inside Visual Studio Code:
-
-### Step 1: Clone or Open in VSCode
-1. Open Visual Studio Code.
+### Step 1: Open Project in VSCode
+1. Launch Visual Studio Code.
 2. Select **File > Open Folder...** and choose the project directory:
-   ```
-   c:\Users\singh\OneDrive\Desktop\listing-reviewer
-   ```
-3. Open the integrated terminal in VSCode (`Ctrl + \`` or **Terminal > New Terminal**).
-
-### Step 2: Install Recommended VSCode Extensions (Optional but Recommended)
-- **ESLint** (`dbaeumer.vscode-eslint`)
-- **Prettier - Code formatter** (`esbenp.prettier-vscode`)
-- **Tailwind CSS IntelliSense** (`bradlc.vscode-tailwindcss`)
-
-### Step 3: Configure Environment Variables
-1. In the VSCode terminal, copy the `.env.example` file to create your server `.env`:
    ```bash
-   cp .env.example server/.env
+   listing-reviewer
    ```
-2. Verify or customize values in `server/.env`:
-   - `PORT=5000`
-   - `MONGODB_URI=mongodb://127.0.0.1:27017/marketplace_quality_reviewer` (or your MongoDB Atlas connection string)
-   - `JWT_SECRET=your_super_secret_jwt_key_at_least_32_characters`
-   - `LLM_PROVIDER=gemini` (leave `GEMINI_API_KEY` blank to test with the deterministic fallback, or supply a key to test external AI).
+3. Open the integrated terminal (`Ctrl + \`` or **Terminal > New Terminal**).
 
-### Step 4: Install Dependencies
-Run the install command in the root terminal:
+### Step 2: Install Dependencies
+Run from the root directory:
 ```bash
 npm install
 npm --prefix server install
 npm --prefix client install
 ```
 
-### Step 5: Seed Sample Marketplace Policies & Accounts
-Initialize the database with default test users, categories, policies, and sample listings:
+### Step 3: Configure Environment Variables
+1. Copy the provided `.env.example` file to create your server `.env`:
+   ```bash
+   cp .env.example server/.env
+   ```
+2. Verify or update `server/.env`:
+   ```env
+   PORT=5000
+   NODE_ENV=development
+   CLIENT_ORIGIN=http://localhost:5173
+   MONGODB_URI=mongodb://127.0.0.1:27017/marketplace_quality_reviewer
+   JWT_SECRET=your_super_secret_jwt_key_at_least_32_characters
+   LLM_PROVIDER=gemini
+   GEMINI_API_KEY=
+   ```
+   *(Leaving `GEMINI_API_KEY` blank automatically activates the deterministic fallback engine).*
+
+3. Verify `client/.env.production` (or create `client/.env` if pointing to a custom backend):
+   ```env
+   VITE_API_BASE_URL=/api
+   ```
+
+### Step 4: Seed Initial Marketplace Policies & Accounts
+Initialize the database with default test accounts, categories, and policy clauses:
 ```bash
 npm run seed
 ```
 
-### Step 6: Run & Debug in VSCode
-
-#### Option A: One-Click VSCode Debugger (F5)
-1. Click the **Run and Debug** icon on the VSCode Activity Bar (`Ctrl + Shift + D`).
-2. Select **"Run Full Dev Stack (Concurrent)"** from the dropdown and press **F5** (or click the green Play button).
-3. Both backend (port 5000) and frontend (port 5173) will start up automatically in your VSCode integrated terminal.
-
-#### Option B: Terminal Command
-Alternatively, run directly from the VSCode terminal:
+### Step 5: Run the Development Stack
+Run both frontend and backend concurrently from the root terminal:
 ```bash
 npm run dev
 ```
+Or start each service separately:
+- Backend: `npm --prefix server run dev` (Port 5000)
+- Frontend: `npm --prefix client run dev` (Port 5173)
 
-### Step 7: Access the Application
+### Step 6: Access the Application
 Open your browser to:
 ```
 http://localhost:5173
 ```
-
-### Default Pre-Seeded Accounts:
-| Role | Email | Password | Permissions |
-| :--- | :--- | :--- | :--- |
-| **Administrator** | `admin@marketplace.local` | `AdminPass123!` | Full admin access, User roster, Reports, Settings |
-| **Reviewer** | `reviewer@marketplace.local` | `ReviewerPass123!` | Audit workspace, approve/reject, request changes |
-| **Seller** | `seller@marketplace.local` | `SellerPass123!` | Submit listings, view status, fix & resubmit |
+Log in using one of the pre-seeded accounts:
+- **Admin**: `admin@marketplace.local` / `AdminPass123!`
+- **Reviewer**: `reviewer@marketplace.local` / `ReviewerPass123!`
+- **Seller**: `seller@marketplace.local` / `SellerPass123!`
 
 ---
 
-## 5. Live Free Permanent Hosting Instructions
+## 5. Automated Testing
 
-You can host this project permanently for free using **Render** (free Web Service tier) paired with **MongoDB Atlas** (free M0 Sandbox cluster).
+The project includes an end-to-end integration and unit test suite covering authentication, authorization, deterministic validators, policy grounding, human review workflows, and React UI components.
 
-### Free Architecture Overview:
-- **Web Service Host**: [Render.com](https://render.com) (Free Tier: 750 free instance hours/month, continuous deployment from GitHub).
-- **Database**: [MongoDB Atlas](https://www.mongodb.com/cloud/atlas) (Free M0 Shared Cluster: 512 MB storage, always free).
-- **Serving Model**: The Node.js Express backend serves both the `/api/*` REST endpoints and the compiled React production frontend from `client/dist` under a single free domain.
-
-### Step-by-Step Free Deployment:
-
-#### Step 1: Create a Free MongoDB Atlas Database
-1. Go to [mongodb.com/cloud/atlas](https://www.mongodb.com/cloud/atlas) and sign up for a free account.
-2. Create a new free cluster (**M0 Sandbox**, AWS or GCP region closest to you).
-3. In **Database Access**, create a database user (e.g., `listingguard-admin`) with a secure password.
-4. In **Network Access**, click **Add IP Address** and select **Allow Access from Anywhere (`0.0.0.0/0`)**.
-5. Click **Connect > Drivers (Node.js)** and copy your connection string:
-   ```
-   mongodb+srv://listingguard-admin:<password>@cluster0.abcde.mongodb.net/marketplace?retryWrites=true&w=majority
-   ```
-
-#### Step 2: Push Your Code to GitHub
-1. Create a new repository on your GitHub account (e.g. `marketplace-listing-reviewer`).
-2. Push your project to GitHub:
-   ```bash
-   git add .
-   git commit -m "feat: complete enterprise marketplace listing reviewer"
-   git remote add origin https://github.com/<your-username>/marketplace-listing-reviewer.git
-   git push -u origin main
-   ```
-
-#### Step 3: Deploy to Render (Free Web Service)
-1. Sign up or log in to [render.com](https://render.com).
-2. Click **New + > Web Service**.
-3. Connect your GitHub repository.
-4. Configure the service settings:
-   - **Name**: `listingguard-marketplace-reviewer`
-   - **Region**: Oregon (US West) or Frankfurt (EU)
-   - **Runtime**: `Node`
-   - **Branch**: `main`
-   - **Build Command**:
-     ```bash
-     npm run build:prod
-     ```
-   - **Start Command**:
-     ```bash
-     npm start
-     ```
-   - **Instance Type**: `Free`
-5. Click **Advanced > Add Environment Variable**:
-   | Key | Value |
-   | :--- | :--- |
-   | `NODE_ENV` | `production` |
-   | `PORT` | `10000` |
-   | `MONGODB_URI` | `mongodb+srv://<user>:<password>@cluster0.abcde.mongodb.net/marketplace?retryWrites=true&w=majority` |
-   | `JWT_SECRET` | *(Click "Generate" or paste a random 32-character string)* |
-   | `LLM_PROVIDER` | `gemini` |
-   | `GEMINI_API_KEY` | *(Optional: your Gemini API key, or leave blank to use fallback)* |
-6. Click **Create Web Service**.
-
-#### Step 4: Verification & Live Link
-Render will automatically:
-1. Run `npm run build:prod` (installs backend and frontend dependencies and compiles `client/dist`).
-2. Run `npm start` which boots the server and auto-seeds initial data on first boot.
-3. Provide your permanently active public URL:
-   ```
-   https://listingguard-marketplace-reviewer.onrender.com
-   ```
-You can verify the deployment status at any time via:
-```
-https://listingguard-marketplace-reviewer.onrender.com/api/health
-```
-
----
-
-## 6. Running Automated Tests
-
-### Run All Backend Tests (18 tests across 4 test suites):
+### Run All Backend Tests (18 tests across 4 suites):
 ```bash
 npm run test:server
 ```
-Covers:
-- **`auth.test.js`**: User signup, login, password confirmation, role validation, reviewer restrictions on policies.
-- **`review.test.js`**: 12-step review execution, AI and rule findings, human approval of suggestions, custom edit before approval, rejection workflows, audit log events.
-- **`validation.test.js`**: Deterministic validation bounds, missing required fields, negative prices, duplicate detection algorithms.
-- **`policy.test.js`**: Retrieval-augmented grounding and anti-hallucination citation checks.
+Test coverage breakdown:
+- **`server/tests/auth.test.js`**: User registration, login, role assignment, token generation, and authorization guards.
+- **`server/tests/review.test.js`**: 12-step review execution, AI and rule findings generation, human approval of revisions, inline custom edit approval, suggestion rejection, and audit trail logging.
+- **`server/tests/validation.test.js`**: Required field enforcement, negative price rejection, title/description boundaries, and duplicate similarity detection.
+- **`server/tests/policy.test.js`**: RAG policy retrieval, grounding verification, and anti-hallucination citation checks.
 
-### Run All Frontend Tests:
+### Run All Frontend Component Tests:
 ```bash
 npm run test:client
 ```
-Covers:
-- SeverityBadge rendering
-- StatusBadge rendering
-- DiffViewer comparison
-- Modal interactions
+Verifies `SeverityBadge`, `StatusBadge`, `DiffViewer`, and modal interactions.
 
 ### Production Build Verification:
 ```bash
 npm run build
 ```
-Compiles and bundles the client into `client/dist`.
+Executes Vite production compilation and builds client assets into `client/dist`.
 
 ---
 
-## 7. REST API Contract Summary
+## 6. Limitations & System Constraints
+
+1. **No External Marketplace Publishing**:
+   - The platform deliberately does **not** push listings to real live marketplace channels (e.g., Amazon, eBay, Shopify). It serves strictly as a pre-publication compliance, moderation, and quality assurance gate.
+2. **Deterministic Fallback Boundary**:
+   - When external LLM API keys are absent or network requests time out (20s limit), the system falls back to the deterministic pattern matcher. While comprehensive for prohibited terms, extreme claims, and required field anomalies, nuanced contextual semantics benefit from configuring a live Gemini API key.
+3. **Similarity Detection False Positives**:
+   - Near-duplicate detection uses token-based Jaccard overlap and Levenshtein distance. Highly standardized listings (e.g., replacement cables, standard size variations) may trigger duplicate warnings; these are explicitly flagged as advisory disclaimers for reviewer discretion.
+4. **Batch Processing Sizing Limits**:
+   - Batch reviews are capped at 50 items per job (`MAX_BATCH_SIZE=50`) to maintain browser responsiveness and prevent backend memory spikes during CSV parsing.
+5. **Free Cloud Tier Cold Starts**:
+   - When hosted on Render's free tier, the backend web service spins down after 15 minutes of inactivity. Initial requests may take 30–50 seconds to wake the service.
+
+---
+
+## 7. Cloud Deployment Guide (Render & MongoDB Atlas)
+
+### A. Deploy Backend Web Service on Render
+1. In the Render Dashboard, click **New + > Web Service**.
+2. Select your repository (`marketplace-listing-reviewer`).
+3. Set the following parameters:
+   - **Root Directory**: `server`
+   - **Environment**: `Node`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   - **Instance Type**: `Free` ($0/month)
+4. Add Environment Variables under the **Environment** tab:
+   - `NODE_ENV`: `production`
+   - `PORT`: `10000`
+   - `MONGODB_URI`: `mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/listing_reviewer?retryWrites=true&w=majority`
+   - `JWT_SECRET`: `listingguard_super_secure_jwt_token_secret_key_32_chars`
+   - `CLIENT_ORIGIN`: `https://marketplace-listing-reviewer.onrender.com`
+   - `LLM_PROVIDER`: `gemini`
+   - `GEMINI_API_KEY`: *(Optional: leave blank for deterministic fallback, or provide Google AI Studio key)*
+5. Click **Create Web Service**.
+
+### B. Deploy Frontend Static Site on Render
+1. In the Render Dashboard, click **New + > Static Site**.
+2. Select your repository (`marketplace-listing-reviewer`).
+3. Set the following parameters:
+   - **Root Directory**: `client`
+   - **Build Command**: `npm install && npm run build`
+   - **Publish Directory**: `dist`
+4. Add Environment Variable:
+   - `VITE_API_BASE_URL`: `https://marketplace-listing-reviewer-server.onrender.com/api`
+5. Click **Create Static Site**.
+*(The included `client/public/_redirects` file automatically handles SPA routing rewrites).*
+
+---
+
+## 8. REST API Reference
 
 | Method | Endpoint | Description | Role / Auth |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/register` | Register new reviewer or seller | Public (Rate-limited) |
-| `POST` | `/api/auth/login` | Login and receive JWT cookie & token | Public (Rate-limited) |
-| `POST` | `/api/auth/logout` | Invalidate cookie / session | Public |
-| `GET` | `/api/auth/me` | Fetch currently authenticated user | Authenticated |
-| `PATCH` | `/api/auth/profile` | Update display name, department, theme | Authenticated |
+| `GET` | `/` | API welcome banner and service status | Public |
+| `GET` | `/api/health` | Health check & MongoDB connection status | Public |
+| `POST` | `/api/auth/register` | Register new account (Reviewer, Seller, Admin) | Public (Rate-limited) |
+| `POST` | `/api/auth/login` | Authenticate and obtain JWT cookie & token | Public (Rate-limited) |
+| `POST` | `/api/auth/logout` | Invalidate cookie and session | Authenticated |
+| `GET` | `/api/auth/me` | Retrieve currently authenticated user | Authenticated |
+| `PATCH` | `/api/auth/profile` | Update profile details and theme | Authenticated |
 | `POST` | `/api/auth/change-password` | Update user password | Authenticated |
 | `POST` | `/api/auth/forgot-password` | Request password reset token | Public |
-| `POST` | `/api/auth/reset-password/:token` | Complete token-based password reset | Public |
-| `GET` | `/api/health` | Service health & MongoDB status | Public |
+| `POST` | `/api/auth/reset-password/:token` | Complete password reset with token | Public |
 | `GET` | `/api/dashboard/stats` | Aggregated catalog & review metrics | Authenticated |
-| `GET` | `/api/listings` | Search, filter, paginate listings | Authenticated |
+| `GET` | `/api/listings` | Search, filter, and paginate listings | Authenticated |
 | `POST` | `/api/listings` | Create listing (Draft / Pending) | Authenticated |
 | `GET` | `/api/listings/:id` | View listing details and reviews | Authenticated |
 | `PATCH` | `/api/listings/:id` | Update listing content | Owner / Admin / Reviewer |
@@ -316,41 +309,31 @@ Compiles and bundles the client into `client/dist`.
 | `POST` | `/api/listings/:id/duplicate` | Duplicate listing as draft | Authenticated |
 | `PATCH` | `/api/listings/:id/archive` | Toggle archived status | Authenticated |
 | `PATCH` | `/api/listings/:id/assign` | Assign review task to reviewer | Admin / Reviewer |
-| `POST` | `/api/listings/:id/request-changes` | Send changes requested back to author | Admin / Reviewer |
+| `POST` | `/api/listings/:id/request-changes` | Send changes requested note to seller | Admin / Reviewer |
 | `PATCH` | `/api/listings/:id/resubmit` | Fix & resubmit listing after changes | Listing Owner / Seller |
 | `POST` | `/api/listings/:id/reviews` | Trigger 12-step quality review | Reviewer / Admin |
 | `GET` | `/api/reviews/:id` | Get review findings & diffs | Authenticated |
 | `PATCH` | `/api/reviews/:id/decision` | Mark Approved, Rejected, or Changes Requested | Reviewer / Admin |
 | `POST` | `/api/reviews/:id/revisions/:findingId/approve` | Approve suggestion & update listing | Reviewer / Admin |
 | `POST` | `/api/reviews/:id/revisions/:findingId/reject` | Reject suggestion with reason | Reviewer / Admin |
-| `PATCH` | `/api/reviews/:id/revisions/:findingId` | Edit suggestion & apply custom text | Reviewer / Admin |
+| `PATCH` | `/api/reviews/:id/revisions/:findingId` | Inline edit suggestion & apply custom text | Reviewer / Admin |
 | `POST` | `/api/reviews/:id/approve-all` | Approve all eligible revisions | Reviewer / Admin |
 | `GET` | `/api/reports/analytics` | Aggregated platform compliance stats | Authenticated |
-| `GET` | `/api/reports/export-listings` | Export listings catalog as CSV | Admin Only |
+| `GET` | `/api/reports/export-listings` | Export listing catalog as CSV | Admin Only |
 | `GET` | `/api/reports/export-reviews` | Export audit findings as CSV | Admin Only |
 | `GET` | `/api/reports/system` | System diagnostics & AI provider status | Admin Only |
-| `GET` | `/api/users` | List all platform members | Admin Only |
-| `POST` | `/api/users` | Create new platform user | Admin Only |
-| `PATCH` | `/api/users/:id/role` | Change member role | Admin Only |
+| `GET` | `/api/users` | List all platform users | Admin Only |
+| `PATCH` | `/api/users/:id/role` | Modify member role | Admin Only |
 | `PATCH` | `/api/users/:id/status` | Suspend or activate member | Admin Only |
-| `GET` | `/api/users/reviewers` | List active reviewers for assignment | Admin / Reviewer |
-| `GET` | `/api/policies` | List policy documents & sections | Authenticated |
+| `GET` | `/api/policies` | List marketplace policy documents | Authenticated |
 | `POST` | `/api/policies` | Create policy document | Admin Only |
 | `POST` | `/api/policies/:id/sections` | Add section with unique code | Admin Only |
-| `GET` | `/api/policies/settings` | Get categories & thresholds | Authenticated |
-| `PATCH` | `/api/policies/settings` | Update categories & thresholds | Admin Only |
 | `POST` | `/api/batches/upload` | Validate CSV and return preview | Reviewer / Admin |
 | `POST` | `/api/batches/import` | Import CSV rows & review in batch | Reviewer / Admin |
-| `POST` | `/api/batches` | Batch review selected listing IDs | Reviewer / Admin |
 | `GET` | `/api/audit` | Query immutable audit log | Reviewer / Admin |
 
 ---
 
-## 8. Enterprise Security & Invariants Checklist
+## 9. License
 
-- [x] **No Auto-Publishing**: Approved listings never interact with external marketplace publisher APIs.
-- [x] **Human Review Invariant**: AI suggestions never alter database listing fields without explicit human reviewer authorization.
-- [x] **Strict Privilege Guard**: Public registration sanitizes any attempt to claim `administrator` role.
-- [x] **Anti-Hallucination Guard**: Every cited policy section is cross-checked against actual retrieved policy documents.
-- [x] **Prompt Injection Immunity**: Untrusted seller content is strictly isolated within XML-style `<listing_data>` tags.
-- [x] **Resilient Fallback**: Operates with 100% feature coverage even when external LLM providers are offline.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

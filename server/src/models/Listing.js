@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { normalizeAttributes } from '../utils/attributeNormalizer.js';
 
 const listingSchema = new mongoose.Schema(
   {
@@ -27,14 +28,14 @@ const listingSchema = new mongoose.Schema(
     currency: {
       type: String,
       required: [true, 'Currency is required'],
+      enum: ['USD', 'INR', 'EUR', 'GBP'],
       default: 'USD',
       uppercase: true,
       trim: true,
     },
     attributes: {
-      type: Map,
-      of: mongoose.Schema.Types.Mixed,
-      default: {},
+      type: mongoose.Schema.Types.Mixed,
+      default: [],
     },
     seller: {
       type: String,
@@ -46,6 +47,35 @@ const listingSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    revision: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    revisionHistory: [
+      {
+        revision: Number,
+        title: String,
+        description: String,
+        category: String,
+        price: Number,
+        currency: String,
+        attributes: mongoose.Schema.Types.Mixed,
+        seller: String,
+        status: String,
+        changeRequestReason: String,
+        changeRequestFields: [String],
+        submittedAt: { type: Date, default: Date.now },
+      },
+    ],
+    changeRequestFields: {
+      type: [String],
+      default: [],
+    },
+    changeRequestReason: {
+      type: String,
+      default: null,
+    },
     status: {
       type: String,
       enum: [
@@ -56,6 +86,7 @@ const listingSchema = new mongoose.Schema(
         'Reviewing',
         'Changes Requested',
         'Changes Suggested',
+        'Pending Admin Approval',
         'Approved',
         'Rejected',
         'Failed',
@@ -120,6 +151,13 @@ const listingSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+listingSchema.pre('save', function (next) {
+  if (this.attributes) {
+    this.attributes = normalizeAttributes(this.attributes);
+  }
+  next();
+});
 
 listingSchema.index({ title: 'text', description: 'text', seller: 'text' });
 listingSchema.index({ status: 1, createdAt: -1 });

@@ -4,6 +4,7 @@ import api from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
 import { SeverityBadge } from '../components/SeverityBadge';
 import { useAuth } from '../context/AuthContext';
+import { formatPrice } from '../utils/currency';
 import {
   Package,
   Plus,
@@ -21,6 +22,8 @@ import {
   Archive,
   ArchiveRestore,
   UserCheck,
+  RefreshCw,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const ListingsPage = () => {
@@ -55,8 +58,11 @@ export const ListingsPage = () => {
       .catch(() => {});
   }, []);
 
-  const fetchListings = async () => {
-    setLoading(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const fetchListings = async (silent = false) => {
+    if (!silent) setLoading(true);
+    else setIsRefreshing(true);
     try {
       const params = new URLSearchParams({
         page,
@@ -80,6 +86,8 @@ export const ListingsPage = () => {
         params.append('assignedToMe', 'true');
       } else if (activeTab === 'changes') {
         params.append('status', 'Changes Requested');
+      } else if (activeTab === 'pending_admin') {
+        params.append('status', 'Pending Admin Approval');
       } else if (status) {
         params.append('status', status);
       }
@@ -88,16 +96,23 @@ export const ListingsPage = () => {
       if (res.data.success) {
         setListings(res.data.data);
         setPagination(res.data.pagination);
+        setError(null);
       }
     } catch (err) {
-      setError('Failed to fetch listings. Please retry.');
+      if (!silent) setError('Failed to fetch listings. Please retry.');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
   useEffect(() => {
     fetchListings();
+    // Auto-poll every 20 seconds for multi-role real-time synchronization
+    const timer = setInterval(() => {
+      fetchListings(true);
+    }, 20000);
+    return () => clearInterval(timer);
   }, [page, activeTab, category, status, severity, sortBy, sortOrder]);
 
   const handleSearchSubmit = (e) => {
@@ -158,13 +173,24 @@ export const ListingsPage = () => {
             Browse, manage, filter, duplicate, and review marketplace product and service listings.
           </p>
         </div>
-        <Link
-          to="/listings/new"
-          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs"
-        >
-          <Plus size={16} />
-          <span>Create Listing</span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchListings()}
+            disabled={loading || isRefreshing}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold rounded-xl transition-colors shadow-xs"
+            title="Refresh listings"
+          >
+            <RefreshCw size={14} className={loading || isRefreshing ? 'animate-spin' : ''} />
+            <span>Sync</span>
+          </button>
+          <Link
+            to="/listings/new"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-xl transition-colors shadow-xs"
+          >
+            <Plus size={16} />
+            <span>Create Listing</span>
+          </Link>
+        </div>
       </div>
 
       {actionSuccess && (
@@ -226,6 +252,23 @@ export const ListingsPage = () => {
           <AlertTriangle size={14} className="text-amber-500" />
           <span>Needs Action</span>
         </button>
+
+        {isAdmin && (
+          <button
+            onClick={() => {
+              setActiveTab('pending_admin');
+              setPage(1);
+            }}
+            className={`px-3.5 py-1.5 rounded-lg font-semibold transition-colors flex items-center gap-1.5 ${
+              activeTab === 'pending_admin'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <ShieldCheck size={14} />
+            <span>Pending Admin Approval</span>
+          </button>
+        )}
 
         <button
           onClick={() => {
@@ -290,6 +333,7 @@ export const ListingsPage = () => {
               <option value="Under Review">Under Review</option>
               <option value="Changes Suggested">Changes Suggested</option>
               <option value="Changes Requested">Changes Requested</option>
+              <option value="Pending Admin Approval">Pending Admin Approval</option>
               <option value="Approved">Approved</option>
               <option value="Rejected">Rejected</option>
             </select>
@@ -372,12 +416,19 @@ export const ListingsPage = () => {
                       className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition-colors"
                     >
                       <td className="py-4 px-6 font-medium text-slate-900 dark:text-white max-w-sm">
-                        <Link
-                          to={`/listings/${item._id}`}
-                          className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors block font-semibold truncate"
-                        >
-                          {item.title}
-                        </Link>
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            to={`/listings/${item._id}`}
+                            className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors block font-semibold truncate"
+                          >
+                            {item.title}
+                          </Link>
+                          {item.revision > 1 && (
+                            <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300">
+                              v{item.revision}
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[11px] text-slate-400 block truncate">
                           {item.description}
                         </span>
@@ -390,7 +441,7 @@ export const ListingsPage = () => {
                       </td>
 
                       <td className="py-4 px-4 font-semibold text-slate-900 dark:text-white whitespace-nowrap">
-                        ${item.price?.toFixed(2)} {item.currency}
+                        {formatPrice(item.price, item.currency)}
                       </td>
 
                       <td className="py-4 px-4 text-slate-600 dark:text-slate-300">{item.seller}</td>
@@ -468,8 +519,10 @@ export const ListingsPage = () => {
                             {item.archived ? <ArchiveRestore size={16} /> : <Archive size={16} />}
                           </button>
 
-                          {/* Delete Listing (Only if admin or reviewer, never seller) */}
-                          {(isAdmin || (!isSeller && item.createdBy?._id === user?._id)) && (
+                          {/* Delete Listing (Admins can delete any; Sellers can delete their own Drafts; Reviewers can delete own listings) */}
+                          {(isAdmin ||
+                            (isSeller && item.status === 'Draft' && (item.createdBy?._id === user?._id || item.createdBy === user?._id)) ||
+                            (!isSeller && (item.createdBy?._id === user?._id || item.createdBy === user?._id))) && (
                             <button
                               onClick={() => handleDelete(item._id, item.title)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded-lg transition-colors"

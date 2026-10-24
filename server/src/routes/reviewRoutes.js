@@ -20,6 +20,7 @@ router.post('/:id/approve-all', approveAllEligibleRevisions);
 
 router.post('/:id/revisions/:findingId/approve', approveRevision);
 router.post('/:id/revisions/:findingId/reject', rejectRevision);
+router.post('/:id/findings/:findingId/dismiss', rejectRevision);
 router.patch('/:id/revisions/:findingId', editAndApproveRevision);
 
 export default router;
