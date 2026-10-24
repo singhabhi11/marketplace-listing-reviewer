@@ -1,7 +1,21 @@
 import axios from 'axios';
 
+const resolveBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && envUrl.trim() !== '') {
+    const clean = envUrl.trim().replace(/\/+$/, '');
+    return clean.endsWith('/api') ? clean : `${clean}/api`;
+  }
+  // If in production build, default to the live Render backend
+  if (import.meta.env.PROD) {
+    return 'https://marketplace-listing-reviewer-server.onrender.com/api';
+  }
+  // In local development, use Vite proxy
+  return '/api';
+};
+
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api',
+  baseURL: resolveBaseUrl(),
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
