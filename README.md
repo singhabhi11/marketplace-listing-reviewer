@@ -30,11 +30,11 @@ The database comes pre-seeded with three organizational personas for evaluation:
 
 | Persona / Role | Email | Password | Access Scope & Responsibilities |
 | :--- | :--- | :--- | :--- |
-| **System Administrator** | `admin@marketplace.local` | `AdminPass123!` | Platform oversight, User Management roster (`/users`), change user roles, suspend/activate accounts, Policy Library authoring (`/policies`), CSV compliance reports (`/reports`), and audit logs (`/audit`). |
-| **Marketplace Reviewer** | `reviewer@marketplace.local` | `ReviewerPass123!` | Audit workspace (`/reviews`), run deterministic & AI reviews, inspect policy citations, approve revisions, custom inline edit, reject suggestions, request changes with mandatory notes, and batch reviews. |
-| **Seller / Creator** | `seller@marketplace.local` | `SellerPass123!` | Create listings (`/listings/new`), manage drafts, view review findings and feedback notes, edit and resubmit listings. *(Forbidden from reviewing, approving, or deleting catalog listings).* |
+| **System Administrator** | `admin@marketplace.local` | `AdminPass123!` | Platform oversight, User Management roster (`/users`), change user roles, suspend/activate accounts, Policy Library authoring (`/policies`), final approvals, CSV compliance reports (`/reports`), and audit logs (`/audit`). |
+| **Marketplace Reviewer** | `reviewer@marketplace.local` | `ReviewerPass123!` | Audit workspace (`/reviews`), run deterministic & AI reviews, inspect policy citations, approve revisions, custom inline edit, dismiss findings, request changes with mandatory notes and field selectors, and batch reviews. |
+| **Seller / Creator** | `seller@marketplace.local` | `SellerPass123!` | Create listings (`/listings/new`), save & delete drafts, view review findings and feedback notes, edit and resubmit listings (`v1 -> v2+`). *(Forbidden from reviewing, approving, or deleting catalog listings).* |
 
-*(You can also use the registration page to self-register with any of the 3 roles for testing).*
+*(You can also use the registration page to self-register with any role for evaluation).*
 
 ---
 
@@ -44,21 +44,31 @@ The database comes pre-seeded with three organizational personas for evaluation:
 
 ```mermaid
 flowchart TD
-    A["Listing Input (Web Form / CSV Batch)"] --> B["Deterministic Validation Engine"]
-    B --> C{"Deterministic Pass / Critical Issues"}
-    C --> D["Active Policy & Brand Guide Retrieval (RAG)"]
-    D --> E["LLM Provider Call (Google Gemini / OpenAI / Heuristic Fallback)"]
-    E --> F["Strict JSON Schema Validation (Zod)"]
-    F --> G["Policy Citation Grounding Verification"]
-    G --> H["Merge Deterministic & AI Findings"]
-    H --> I["Immutable Review Snapshot Saved"]
-    I --> J["Interactive Review Workspace"]
-    J --> K{"Human Reviewer Decision"}
-    K -- "Approve Suggestion" --> L["Apply Field Revision & Log Audit Event"]
-    K -- "Custom Edit & Approve" --> M["Apply Custom Text & Log Audit Event"]
-    K -- "Reject Suggestion" --> N["Preserve Listing & Record Rejection Reason"]
-    K -- "Request Changes" --> P["Status: Changes Requested & Notify Author"]
-    K -- "Mark Approved / Rejected" --> O["Update Listing Final Lifecycle State"]
+    A["Listing Submission (Web Form / CSV Batch)"] --> B["Deterministic Validator"]
+    B --> C{"Deterministic Pass / Fail"}
+    C -- "Violations Found" --> D["Deterministic Policy Findings"]
+    C -- "Field Checks Pass" --> E["RAG Policy Retriever"]
+    D --> E
+    E --> F["Ground Policy Sections (Active Policies DB)"]
+    F --> G["AI Review Engine (Gemini / Heuristic Fallback)"]
+    G --> H["Strict JSON Schema Validation (Zod)"]
+    H --> I["Policy Citation Grounding Filter"]
+    I --> J["Immutable Review Snapshot Saved (MongoDB)"]
+    J --> K["Interactive Review Workspace"]
+    K --> L{"Human Reviewer Decision"}
+    L -- "Approve Suggestion" --> M["Apply Field Revision & Log Audit Event"]
+    L -- "Custom Inline Edit" --> N["Apply Custom Value & Log Audit Event"]
+    L -- "Reject Suggestion" --> O["Dismiss Finding (Listing Unchanged)"]
+    L -- "Request Changes" --> P["Status: Changes Requested (Fields & Reason)"]
+    L -- "Mark Approved" --> Q{"Admin Approval Policy?"}
+    Q -- "Required" --> R["Status: Pending Admin Approval"]
+    Q -- "Direct" --> S["Status: Approved"]
+    L -- "Reject Listing" --> T["Status: Rejected (Reason Logged)"]
+    P --> U["Seller Resubmit (Increments Revision v2+)"]
+    U --> B
+    R --> V["Administrator Dashboard (Final Decision)"]
+    V -- "Approve" --> S
+    V -- "Reject" --> T
 ```
 
 ### B. Policy Grounding & Citation Sequence
@@ -76,46 +86,185 @@ sequenceDiagram
 
     Reviewer->>Client: Click "Run Quality Review"
     Client->>API: POST /api/listings/:id/reviews
-    API->>Engine: executeReviewWorkflow(listing)
-    Engine->>Engine: Run Deterministic Validators (Price, Length, Duplicates)
+    API->>Engine: orchestrateListingReview(listingId)
+    Engine->>Engine: Run Deterministic Validation (Price, Boundaries, Attributes)
     Engine->>RAG: retrieveRelevantPolicies(listing.category, text)
-    RAG-->>Engine: Grounded Policy Sections
-    alt LLM API Key Configured
+    RAG-->>Engine: Grounded Policy Sections List
+    alt External LLM Configured (Gemini / OpenAI)
         Engine->>AI: executeAiReview(listing, policies) with Prompt Injection Defense
         AI-->>Engine: Structured JSON Output (Zod Verified)
-    else No API Key / Network Failure
-        Engine->>Engine: runHeuristicFallbackReview() (Deterministic Engine)
+    else Fallback or No API Key
+        Engine->>Engine: runHeuristicFallbackReview() (Local Deterministic Rules)
     end
     Engine->>Engine: verifyPolicyCitations(findings, policies)
     Engine->>DB: Save Review Snapshot & Audit Event
     DB-->>API: Saved Review Object
-    API-->>Client: 200 OK Review Findings + Diffs
-    Client-->>Reviewer: Render Workspace with Citations & DiffViewer
+    API-->>Client: 200 OK Review Findings + Diff Data
+    Client-->>Reviewer: Render Review Workspace with DiffViewer
+```
+
+### C. Role-Based Workflow State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Draft : Seller creates draft
+    Draft --> Draft : Seller edits or deletes draft
+    Draft --> Pending_Review : Seller submits for review (v1)
+    Pending_Review --> Changes_Requested : Reviewer requests changes (reason & field checkboxes)
+    Changes_Requested --> Pending_Review : Seller updates & resubmits (v2+, snapshots history)
+    Pending_Review --> Pending_Admin_Approval : Reviewer approves (if requireAdminApproval enabled)
+    Pending_Review --> Approved : Reviewer approves (direct policy)
+    Pending_Admin_Approval --> Approved : Admin grants final approval
+    Pending_Admin_Approval --> Rejected : Admin rejects
+    Pending_Review --> Rejected : Reviewer rejects (mandatory reason)
+    Approved --> [*]
+    Rejected --> [*]
 ```
 
 ---
 
-## 2. Functional Scope & Feature Highlights
+## 2. Project Directory Structure
+
+```
+listing-reviewer/
+├── client/                               # Frontend (React 18 + Vite 5 + Tailwind CSS)
+│   ├── public/
+│   │   ├── _redirects                    # SPA redirect rules for Render static hosting
+│   │   └── favicon.svg
+│   ├── src/
+│   │   ├── components/                   # Reusable UI component library
+│   │   │   ├── DiffViewer.jsx            # Word-level visual diff with additions/deletions
+│   │   │   ├── Navbar.jsx                # Top bar with role indicator, search, sync & dark mode
+│   │   │   ├── Sidebar.jsx               # Navigation links tailored by user role
+│   │   │   ├── SeverityBadge.jsx         # Critical / High / Medium / Low badges
+│   │   │   └── StatusBadge.jsx           # Listing lifecycle state pills
+│   │   ├── context/
+│   │   │   ├── AuthContext.jsx           # JWT session state, login, register, logout
+│   │   │   └── ThemeContext.jsx          # Dark / light theme toggle with local storage persistence
+│   │   ├── layouts/
+│   │   │   └── DashboardLayout.jsx       # Responsive master application shell
+│   │   ├── pages/
+│   │   │   ├── AuditHistoryPage.jsx      # Immutable event trail browser (/audit)
+│   │   │   ├── BatchReviewPage.jsx       # CSV batch import and multi-review workspace (/batch-review)
+│   │   │   ├── DashboardPage.jsx         # KPI metrics, Recharts charts, recent listing table
+│   │   │   ├── ForgotPasswordPage.jsx    # Self-service password reset request
+│   │   │   ├── ListingDetailPage.jsx     # Read-only product preview & revision history
+│   │   │   ├── ListingFormPage.jsx       # Create/Edit listing form with currency & attribute builder
+│   │   │   ├── ListingsPage.jsx          # Searchable, filterable listing catalog with sync button
+│   │   │   ├── LoginPage.jsx             # Sign-in page with quick 1-click test credentials
+│   │   │   ├── PolicyLibraryPage.jsx     # Policy document & section manager (/policies)
+│   │   │   ├── ProfilePage.jsx           # User profile info & password change
+│   │   │   ├── RegisterPage.jsx          # Self-service account registration
+│   │   │   ├── ReportsPage.jsx           # Analytics charts and CSV export triggers (/reports)
+│   │   │   ├── ResetPasswordPage.jsx     # Token-based password update page
+│   │   │   ├── ReviewWorkspacePage.jsx   # AI audit workspace with diffs, findings & approval buttons
+│   │   │   ├── SettingsPage.jsx          # Platform settings (categories, admin approval policy)
+│   │   │   └── UserManagementPage.jsx    # Admin user management roster (/users)
+│   │   ├── services/
+│   │   │   └── api.js                    # Axios instance with auth interceptor & URL resolution
+│   │   └── utils/
+│   │       └── currency.js               # Currency symbols (USD $, INR ₹, EUR €, GBP £) & formatters
+│   ├── index.html                        # Application entry HTML
+│   ├── package.json                      # Frontend dependencies & scripts
+│   ├── tailwind.config.js                # Tailwind CSS design system configuration
+│   └── vite.config.js                    # Vite configuration with IPv4 dev proxy & vendor chunking
+│
+├── server/                               # Backend (Node.js + Express + Mongoose + Vitest)
+│   ├── src/
+│   │   ├── config/
+│   │   │   ├── config.js                 # Environment variable loader & defaults
+│   │   │   └── db.js                     # MongoDB connection with reconnect handlers
+│   │   ├── controllers/
+│   │   │   ├── auditController.js        # Audit log querying and filtering
+│   │   │   ├── authController.js         # JWT registration, authentication, password reset
+│   │   │   ├── batchController.js        # CSV parsing, batch review orchestration
+│   │   │   ├── dashboardController.js    # Metric aggregations for KPIs & chart statistics
+│   │   │   ├── listingController.js      # CRUD, drafts, revisions, submission & resubmission
+│   │   │   ├── policyController.js       # Policy document and section CRUD
+│   │   │   ├── reportController.js       # CSV exports (listings, reviews) and analytics
+│   │   │   ├── reviewController.js       # 12-step review trigger, inline edit, dismiss, approvals
+│   │   │   └── userController.js         # Administrator user roster management
+│   │   ├── middleware/
+│   │   │   ├── auth.js                   # JWT bearer token verification
+│   │   │   ├── errorHandler.js           # Centralized JSON error response handler
+│   │   │   ├── roles.js                  # RBAC authorization guards (requireRole)
+│   │   │   └── validate.js               # Zod request payload validation middleware
+│   │   ├── models/
+│   │   │   ├── AuditEvent.js             # Immutable audit log entries
+│   │   │   ├── BatchJob.js               # Batch CSV import jobs & summary states
+│   │   │   ├── Listing.js                # Listing schema, revision tracking, attributes & currency
+│   │   │   ├── PolicyDocument.js         # Policy document definitions
+│   │   │   ├── PolicySection.js          # Clause-level policy sections with citation codes
+│   │   │   ├── Review.js                 # Review snapshots, findings, revisions, turnaround times
+│   │   │   ├── Setting.js                # System settings (categories, requireAdminApproval)
+│   │   │   └── User.js                   # Users, bcrypt passwords, roles, status
+│   │   ├── routes/                       # Express route routers
+│   │   ├── services/
+│   │   │   ├── ai/
+│   │   │   │   ├── aiProvider.js         # Unified AI dispatcher (Gemini / OpenAI / Heuristic)
+│   │   │   │   ├── heuristicFallback.js  # 100% offline deterministic rule engine
+│   │   │   │   ├── outputSchema.js       # Strict Zod schema for structured AI outputs
+│   │   │   │   └── promptBuilder.js      # Prompt injection-resistant prompt assembler
+│   │   │   ├── audit/
+│   │   │   │   └── auditLogger.js        # Structured audit event persistence
+│   │   │   ├── policy/
+│   │   │   │   └── policyRetriever.js    # RAG policy section retriever
+│   │   │   ├── validation/
+│   │   │   │   └── deterministicValidator.js # Field boundaries, prices, duplicate detection
+│   │   │   └── reviewOrchestrator.js     # 12-step review orchestration pipeline
+│   │   ├── utils/
+│   │   │   ├── attributeNormalizer.js    # Attribute auto-splitting, normalization, text formatting
+│   │   │   └── seed.js                   # Initial policy clauses and default demo accounts
+│   │   ├── app.js                        # Express app initialization, Helmet, CORS, routes
+│   │   └── server.js                     # HTTP server startup bound to 0.0.0.0
+│   ├── tests/                            # Automated test suite (Vitest + Supertest)
+│   │   ├── auth.test.js                  # Registration, JWT, password security, RBAC guards
+│   │   ├── policy.test.js                # Policy authoring, section indexing, RAG retrieval
+│   │   ├── review.test.js                # Orchestration, revisions, inline edits, resubmissions
+│   │   ├── setup.js                      # MongoMemoryServer in-memory DB test lifecycle
+│   │   └── validation.test.js            # Boundary tests, currency, negative price, attributes
+│   └── package.json                      # Backend dependencies, Vitest configuration & scripts
+│
+├── .env.example                          # Environment variable template (no real secrets)
+├── AGENT_USAGE.md                        # Documentation of AI assistance, prompts & verification
+├── LICENSE                               # MIT License
+└── README.md                             # Documentation & Setup Guide
+```
+
+---
+
+## 3. Functional Scope & Feature Highlights
 
 ### A. Role-Based Access Control (RBAC)
-- **Role Verification on Server**: Every protected endpoint enforces `protect` and `authorize(...)` middleware. Roles submitted during public registration are sanitized and validated.
-- **Dedicated User Profile**: Accessible from the top navigation avatar pill (`/profile`), displays initials, email, assigned role badge, account status, and password change form.
+- **Three Core Personas**:
+  - **Seller**: Creates listings, manages drafts, fixes requested changes, and resubmits (`v1 -> v2+`). Forbidden from reviewing, approving, or deleting catalog listings.
+  - **Reviewer**: Evaluates submitted listings, runs AI reviews, inspects policy citations, approves revisions, dismisses false findings, or requests changes.
+  - **Administrator**: Complete system governance, user management (`/users`), policy authoring (`/policies`), final approvals, and audit trail inspection.
+- **Dedicated User Profile**: Accessible via the top avatar pill (`/profile`), displays user role badge, account status, and password update form.
 - **Administrator Roster Management (`/users`)**: Search, filter, modify roles, and toggle user active/suspended status with real-time feedback.
 
-### B. Deterministic Validation & Duplicate Engine
-- **Field Constraints**: Validates required fields (`title`, `description`, `category`, `price`, `seller`), positive numeric pricing, supported currencies, title bounds (10–150 chars), and description bounds (30–5000 chars).
-- **Duplicate & Near-Duplicate Detection**: Evaluates Jaccard token overlap and normalized Levenshtein similarity against existing listings in the database, surfacing warnings with explicit false-positive disclaimers.
+### B. Listing Form Validation & Product Attributes
+- **Title Validation**: Required, 5 to 150 characters, trimmed, rejects whitespace-only strings.
+- **Description Validation**: Required, minimum 20 characters, rejects whitespace-only strings.
+- **Category Validation**: Validated against active allowed categories; placeholder `"Select Category"` is strictly rejected on both frontend and backend.
+- **Price Validation**: Must be greater than 0, numeric, maximum 2 decimal places. HTML validation is supplemented by strict backend Zod and Mongoose schema checks.
+- **Multi-Currency Support**: Includes USD (`$`), INR (`₹`), EUR (`€`), and GBP (`£`) with universal formatting.
+- **Product Attributes Normalizer**:
+  - Automatically detects colon-separated strings (e.g. `"Dimensions: 65 x 65 x 110 cm"` pasted into the key box) and splits them into `{ key: "Dimensions", value: "65 x 65 x 110 cm" }`.
+  - Rejects empty keys, empty values, and duplicate keys case-insensitively.
+  - Generates clean human-readable text representations (never `"[object Map]"`).
 
-### C. Retrieval-Augmented Policy Grounding & Safety
-- **RAG Policy Matching**: Retrieves policy clauses based on category relevancy and keyword indexing.
-- **Prompt Injection Defense**: Encapsulates user listing content inside strict `<listing_data>` XML boundaries and explicitly instructs the model to ignore instructions contained in seller data.
-- **Anti-Hallucination Code Gate**: Verifies every AI-produced citation section ID against active database policies. Hallucinated codes are demoted to `unverified recommendation`.
-- **Zero-Key Deterministic Fallback**: Operates with 100% functionality without requiring external API keys.
+### C. Seller Actions & Revision Tracking
+- **Save Draft**: Allows incomplete drafts while enforcing basic data types and ownership. Sellers can edit and delete their own drafts. Deleting submitted listings is forbidden (403 Forbidden).
+- **Submit for Review**: Runs strict field validation. On success, transitions status to `Pending Review`.
+- **Resubmit Listing**: When changes are requested, the seller updates the flagged fields and clicks "Resubmit for Review". The backend snapshots the existing listing state into `revisionHistory`, increments `revision` (`v1 -> v2`), sets `resubmittedAt`, and transitions status back to `Pending Review`.
 
 ### D. Human Review Workspace & Word-Level DiffViewer
-- **Side-by-Side Diff Comparison**: Word-level visual diff highlighting additions (`bg-emerald-100`) and deletions (`bg-rose-100`).
-- **Granular Actions**: Single-click **Approve Suggestion**, **Edit Before Approving**, or **Reject Suggestion**.
-- **Request Changes Flow**: Reviewers request changes with mandatory notes; sellers receive clear feedback and can **Fix & Resubmit**.
+- **Word-Level Visual Diffs**: Highlights additions (`bg-emerald-100`) and deletions (`bg-rose-100`).
+- **Granular Actions**: Single-click **Approve Suggestion**, **Edit Before Approving**, or **Dismiss Finding**.
+- **Request Changes**: Interactive modal requiring both a clear textual reason and checkboxes selecting which fields require correction (`title`, `description`, `category`, `price`, `currency`, `attributes`).
+- **Mark Approved**: Verifies that no blocking critical findings remain, checks organizational policy (`requireAdminApproval`), and transitions to either `Approved` or `Pending Admin Approval`.
+- **Reject Listing**: Requires a mandatory rejection reason and updates status to `Rejected`.
 - **Batch Processing Workspace (`/batch-review`)**: Multi-listing review orchestration, CSV listing import, and pre-flight validation.
 
 ### E. Analytics & Authorized CSV Exports
@@ -124,31 +273,29 @@ sequenceDiagram
   - `GET /api/reports/export-listings`: Full listing catalog export.
   - `GET /api/reports/export-reviews`: Detailed policy violation audit findings with citations and timestamps.
 
-### F. Theme System
-- Complete Dark & Light mode toggle with class-based persistence in `localStorage` and `document.documentElement`, synchronized across all components.
+### F. Theme System & Real-Time Synchronization
+- Complete Dark & Light mode toggle with class-based persistence in `localStorage` and `document.documentElement`.
+- Dashboards auto-refresh via 20-second polling and include a manual **Sync** button in the header.
 
 ---
 
-## 3. Technology Stack
+## 4. Technology Stack
 
 | Layer | Technologies |
 |---|---|
-| **Frontend** | React 18, Vite 5.4, Tailwind CSS 3.4, React Router v6, Axios, React Hook Form, Lucide React, Recharts |
+| **Frontend** | React 18, Vite 5.4, Tailwind CSS 3.4, React Router v6, Axios, Lucide React, Recharts |
 | **Backend** | Node.js (v18+), Express.js 4, Mongoose 8, JWT with HTTP-only cookies, bcryptjs, Zod 4, Helmet, CORS, Express Rate Limit |
 | **AI & Grounding** | Official Google Generative AI SDK (`@google/generative-ai`), OpenAI REST API fallback, Heuristic Pattern Matcher fallback |
-| **Testing** | Vitest 3, Supertest, React Testing Library, jsdom, MongoDB Memory Server |
+| **Testing** | Vitest 5, Supertest, MongoDB Memory Server |
 | **Cloud Hosting** | Render (Web Service & Static Site), MongoDB Atlas (M0 Shared Cluster) |
 
 ---
 
-## 4. Setup Instructions Step by Step for VSCode
+## 5. Setup Instructions Step by Step for VSCode
 
 ### Step 1: Open Project in VSCode
 1. Launch Visual Studio Code.
-2. Select **File > Open Folder...** and choose the project directory:
-   ```bash
-   listing-reviewer
-   ```
+2. Select **File > Open Folder...** and choose `listing-reviewer`.
 3. Open the integrated terminal (`Ctrl + \`` or **Terminal > New Terminal**).
 
 ### Step 2: Install Dependencies
@@ -176,11 +323,6 @@ npm --prefix client install
    ```
    *(Leaving `GEMINI_API_KEY` blank automatically activates the deterministic fallback engine).*
 
-3. Verify `client/.env.production` (or create `client/.env` if pointing to a custom backend):
-   ```env
-   VITE_API_BASE_URL=/api
-   ```
-
 ### Step 4: Seed Initial Marketplace Policies & Accounts
 Initialize the database with default test accounts, categories, and policy clauses:
 ```bash
@@ -188,13 +330,21 @@ npm run seed
 ```
 
 ### Step 5: Run the Development Stack
-Run both frontend and backend concurrently from the root terminal:
+Start both backend and frontend concurrently from the root terminal:
 ```bash
 npm run dev
 ```
-Or start each service separately:
-- Backend: `npm --prefix server run dev` (Port 5000)
-- Frontend: `npm --prefix client run dev` (Port 5173)
+Or start each service separately in two terminals:
+- **Terminal 1 (Backend)**:
+  ```bash
+  cd server
+  npm run dev
+  ```
+- **Terminal 2 (Frontend)**:
+  ```bash
+  cd client
+  npm run dev
+  ```
 
 ### Step 6: Access the Application
 Open your browser to:
@@ -208,35 +358,30 @@ Log in using one of the pre-seeded accounts:
 
 ---
 
-## 5. Automated Testing
+## 6. Automated Testing
 
 The project includes an end-to-end integration and unit test suite covering authentication, authorization, deterministic validators, policy grounding, human review workflows, and React UI components.
 
-### Run All Backend Tests (18 tests across 4 suites):
+### Run All Backend Tests (26 tests across 4 suites):
 ```bash
-npm run test:server
+npm --prefix server test
 ```
+
 Test coverage breakdown:
 - **`server/tests/auth.test.js`**: User registration, login, role assignment, token generation, and authorization guards.
-- **`server/tests/review.test.js`**: 12-step review execution, AI and rule findings generation, human approval of revisions, inline custom edit approval, suggestion rejection, and audit trail logging.
-- **`server/tests/validation.test.js`**: Required field enforcement, negative price rejection, title/description boundaries, and duplicate similarity detection.
+- **`server/tests/review.test.js`**: 12-step review execution, AI and rule findings generation, human approval of revisions, inline custom edit approval, suggestion rejection, resubmission with revision tracking, and audit trail logging.
+- **`server/tests/validation.test.js`**: Required field enforcement, negative price rejection, title/description boundaries, colon-separated attribute normalization, placeholder category rejection, and duplicate similarity detection.
 - **`server/tests/policy.test.js`**: RAG policy retrieval, grounding verification, and anti-hallucination citation checks.
-
-### Run All Frontend Component Tests:
-```bash
-npm run test:client
-```
-Verifies `SeverityBadge`, `StatusBadge`, `DiffViewer`, and modal interactions.
 
 ### Production Build Verification:
 ```bash
-npm run build
+npm --prefix client run build
 ```
 Executes Vite production compilation and builds client assets into `client/dist`.
 
 ---
 
-## 6. Limitations & System Constraints
+## 7. Limitations & System Constraints
 
 1. **No External Marketplace Publishing**:
    - The platform deliberately does **not** push listings to real live marketplace channels (e.g., Amazon, eBay, Shopify). It serves strictly as a pre-publication compliance, moderation, and quality assurance gate.
@@ -251,7 +396,7 @@ Executes Vite production compilation and builds client assets into `client/dist`
 
 ---
 
-## 7. Cloud Deployment Guide (Render & MongoDB Atlas)
+## 8. Cloud Deployment Guide (Render & MongoDB Atlas)
 
 ### A. Deploy Backend Web Service on Render
 1. In the Render Dashboard, click **New + > Web Service**.
@@ -286,7 +431,7 @@ Executes Vite production compilation and builds client assets into `client/dist`
 
 ---
 
-## 8. REST API Reference
+## 9. REST API Reference
 
 | Method | Endpoint | Description | Role / Auth |
 | :--- | :--- | :--- | :--- |
@@ -305,17 +450,18 @@ Executes Vite production compilation and builds client assets into `client/dist`
 | `POST` | `/api/listings` | Create listing (Draft / Pending) | Authenticated |
 | `GET` | `/api/listings/:id` | View listing details and reviews | Authenticated |
 | `PATCH` | `/api/listings/:id` | Update listing content | Owner / Admin / Reviewer |
-| `DELETE` | `/api/listings/:id` | Delete listing | Admin / Reviewer |
+| `DELETE` | `/api/listings/:id` | Delete listing (Sellers: drafts only) | Owner / Admin |
 | `POST` | `/api/listings/:id/duplicate` | Duplicate listing as draft | Authenticated |
 | `PATCH` | `/api/listings/:id/archive` | Toggle archived status | Authenticated |
 | `PATCH` | `/api/listings/:id/assign` | Assign review task to reviewer | Admin / Reviewer |
-| `POST` | `/api/listings/:id/request-changes` | Send changes requested note to seller | Admin / Reviewer |
-| `PATCH` | `/api/listings/:id/resubmit` | Fix & resubmit listing after changes | Listing Owner / Seller |
+| `POST` | `/api/listings/:id/request-changes` | Send changes requested note & fields to seller | Admin / Reviewer |
+| `PATCH` | `/api/listings/:id/resubmit` | Fix & resubmit listing (bumps revision) | Listing Owner / Seller |
 | `POST` | `/api/listings/:id/reviews` | Trigger 12-step quality review | Reviewer / Admin |
 | `GET` | `/api/reviews/:id` | Get review findings & diffs | Authenticated |
-| `PATCH` | `/api/reviews/:id/decision` | Mark Approved, Rejected, or Changes Requested | Reviewer / Admin |
+| `POST` | `/api/reviews/:id/approve` | Final review approval (or mark Pending Admin) | Reviewer / Admin |
+| `POST` | `/api/reviews/:id/reject` | Final review rejection with mandatory reason | Reviewer / Admin |
 | `POST` | `/api/reviews/:id/revisions/:findingId/approve` | Approve suggestion & update listing | Reviewer / Admin |
-| `POST` | `/api/reviews/:id/revisions/:findingId/reject` | Reject suggestion with reason | Reviewer / Admin |
+| `POST` | `/api/reviews/:id/revisions/:findingId/reject` | Dismiss/reject individual finding | Reviewer / Admin |
 | `PATCH` | `/api/reviews/:id/revisions/:findingId` | Inline edit suggestion & apply custom text | Reviewer / Admin |
 | `POST` | `/api/reviews/:id/approve-all` | Approve all eligible revisions | Reviewer / Admin |
 | `GET` | `/api/reports/analytics` | Aggregated platform compliance stats | Authenticated |
@@ -334,6 +480,6 @@ Executes Vite production compilation and builds client assets into `client/dist`
 
 ---
 
-## 9. License
+## 10. License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
